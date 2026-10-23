@@ -25,12 +25,12 @@ Never overwrite the original sources. Work only under windows/ on branch windows
 Share link parsing (vmess, vless incl. reality, trojan, ss incl. obfs plugin, hysteria2, tuic, socks, http), subscription formats, config generation accepted by `sing-box check`
 (all protocols, rule/global mode, custom rules, TUN inbound), real traffic through a selected node, node switching, speed/connection/memory/daily traffic stats,
 per node HTTPS delay test, rule edit restarts core, port conflict error, UI render of all 8 pages (screenshots under Electron + xvfb).
+Windows system proxy on a real Windows host: enable, disable, exact restoration of pre-existing `ProxyEnable`/`ProxyServer`/`ProxyOverride`, and `service.init` crash recovery.
 
 ## NOT verified on real Windows (top priority for you, you can run Windows)
-1. Windows system proxy: sysproxy.js writes HKCU Internet Settings and calls InternetSetOption via PowerShell. Only tested with a fake exec. Verify enable, disable, restore of previous values, and crash recovery (service.init).
-2. TUN mode: config passes `check`, but running needs admin rights and wintun.dll next to the exe. golang.zx2c4.com/wintun was replaced by github.com/MetaCubeX/wintun-go (see kernel-build/WINTUN_COMMIT.txt). Verify it really creates the adapter; add an admin elevation flow and a clear error when not elevated.
-3. Core process stop on Windows (Core.stop uses p.kill()), no orphan sing-box.exe after the app exits or crashes.
-4. Rule mode downloads remote rule sets (SagerNet sing-geosite/sing-geoip) through the 'proxy' outbound at startup. If the node is dead or GitHub is blocked, startup may fail. Needs a better strategy (cache, fallback, local files; the original project ships geoip/geosite assets, check how Jiajia's custom core consumes them).
+1. TUN mode: config passes `check`, but running needs admin rights and wintun.dll next to the exe. golang.zx2c4.com/wintun was replaced by github.com/MetaCubeX/wintun-go (see kernel-build/WINTUN_COMMIT.txt). Verify it really creates the adapter; add an admin elevation flow and a clear error when not elevated.
+2. Core process stop on Windows (Core.stop uses p.kill()), no orphan sing-box.exe after the app exits or crashes.
+3. Rule mode downloads remote rule sets (SagerNet sing-geosite/sing-geoip) through the 'proxy' outbound at startup. If the node is dead or GitHub is blocked, startup may fail. Needs a better strategy (cache, fallback, local files; the original project ships geoip/geosite assets, check how Jiajia's custom core consumes them).
 5. Packaging: only a portable folder exists (electron-packager). Add a real installer, icon, app signing notes, tray icon, close-to-tray, start with Windows, single instance behavior check.
 
 ## Not implemented compared with the Android app (do these after the above, check the smali/addon-src for exact behavior)
