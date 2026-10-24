@@ -19,6 +19,10 @@ const DEFAULT_SETTINGS = {
   setSystemProxy: true,
   autoStartCore: false,
   rulesProviderBase: 'https://raw.githubusercontent.com/SagerNet',
+  // UI-only settings: never trigger a core restart
+  theme: 'light',              // light | dark
+  closeToTray: true,           // hide to tray instead of quitting on window close
+  autoUpdateSubsMin: 0,        // subscription auto-update interval in minutes, 0 = off
 };
 
 function parseDnsAddress(addr, tag, extra = {}) {
@@ -65,6 +69,30 @@ function userRuleToSingBox(r) {
   if (r.outbound === 'block') rule.action = 'reject';
   else rule.outbound = r.outbound === 'direct' ? 'direct' : 'proxy';
   return { rule, warns };
+}
+
+/** Human readable description of one generated route rule, for the "effective rules" UI. Pure. */
+function describeRule(rule, i) {
+  if (rule.action === 'sniff') return { index: i, match: '全部入站流量', outbound: '嗅探（识别真实协议与域名）', raw: rule };
+  if (rule.action === 'hijack-dns') return { index: i, match: 'DNS 请求', outbound: '劫持到内核 DNS', raw: rule };
+  const cond = [];
+  if (rule.domain_suffix) cond.push('域名后缀 ' + rule.domain_suffix.slice(0, 3).join(rule.domain_suffix.length > 3 ? ' 等' : ', '));
+  if (rule.domain) cond.push('域名 ' + rule.domain.slice(0, 3).join(rule.domain.length > 3 ? ' 等' : ', '));
+  if (rule.domain_keyword) cond.push('关键字 ' + rule.domain_keyword.slice(0, 3).join(' 等'));
+  if (rule.domain_regex) cond.push('正则 ' + rule.domain_regex.length + ' 条');
+  if (rule.ip_cidr) cond.push('IP ' + rule.ip_cidr.slice(0, 3).join(rule.ip_cidr.length > 3 ? ' 等' : ', '));
+  if (rule.source_ip_cidr) cond.push('来源 IP ' + rule.source_ip_cidr.slice(0, 3).join(' 等'));
+  if (rule.ip_is_private) cond.push('私有/局域网地址');
+  if (rule.port) cond.push('端口 ' + rule.port.join(','));
+  if (rule.port_range) cond.push('端口段 ' + rule.port_range.join(','));
+  if (rule.source_port || rule.source_port_range) cond.push('来源端口 ' + [...(rule.source_port || []), ...(rule.source_port_range || [])].join(','));
+  if (rule.network) cond.push(rule.network.toUpperCase());
+  if (rule.protocol) cond.push('协议 ' + rule.protocol.join('/'));
+  if (rule.process_name) cond.push('进程 ' + rule.process_name.join(','));
+  if (rule.rule_set) cond.push('规则集 ' + rule.rule_set.join(', '));
+  const outbound = rule.action === 'reject' ? '拦截（断开连接）'
+    : rule.outbound === 'proxy' ? '走代理' : rule.outbound === 'direct' ? '直连' : '走 ' + rule.outbound;
+  return { index: i, match: cond.join('，') || '全部流量', outbound, raw: rule };
 }
 
 function buildConfig({ nodes, selectedTag, settings = {}, userRules = [], secret = '', cachePath = 'cache.db' }) {
@@ -125,7 +153,9 @@ function buildConfig({ nodes, selectedTag, settings = {}, userRules = [], secret
       cache_file: { enabled: true, path: cachePath },
     },
   };
-  return { config, warnings, selected: sel };
+  const routePreview = rules.map((r, i) => describeRule(r, i));
+  routePreview.push({ index: rules.length, match: '其余全部流量', outbound: '走代理（默认出站）', raw: null });
+  return { config, warnings, selected: sel, routePreview };
 }
 
-module.exports = { buildConfig, DEFAULT_SETTINGS, parseDnsAddress, userRuleToSingBox };
+module.exports = { buildConfig, DEFAULT_SETTINGS, parseDnsAddress, userRuleToSingBox, describeRule };

@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Menu, Tray, nativeImage } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -10,7 +10,7 @@ if (process.env.JIAJIA_NOSANDBOX) app.commandLine.appendSwitch('no-sandbox');
 if (process.env.JIAJIA_USERDATA) app.setPath('userData', process.env.JIAJIA_USERDATA);
 if (!app.requestSingleInstanceLock()) { app.quit(); }
 
-let win; let svc; let quitting = false;
+let win; let svc; let tray; let quitting = false;
 
 function psQuote(s) { return String(s).replace(/'/g, "''"); }
 function requestElevation() {
@@ -30,15 +30,54 @@ async function startCore() {
 
 function send(ch, data) { if (win && !win.isDestroyed()) win.webContents.send(ch, data); }
 
+// ---------- tray ----------
+function trayIcon() {
+  const p = path.join(__dirname, '..', 'assets', 'tray.png');
+  if (fs.existsSync(p)) { const img = nativeImage.createFromPath(p); if (!img.isEmpty()) return img; }
+  return undefined;
+}
+function buildTray() {
+  const icon = trayIcon();
+  if (!icon) return;
+  tray = new Tray(icon);
+  tray.setToolTip('JiajiaBox');
+  const refresh = () => {
+    const st = svc ? svc.core.state : 'stopped';
+    const running = st === 'running';
+    tray.setContextMenu(Menu.buildFromTemplate([
+      { label: running ? '内核运行中' : st === 'starting' ? '内核启动中…' : '内核已停止', enabled: false },
+      { type: 'separator' },
+      { label: '显示主窗口', click: () => { showWin(); } },
+      { label: running ? '停止内核' : '启动内核', click: () => { (running ? svc.stop() : startCore()).catch(() => {}); } },
+      { type: 'separator' },
+      { label: '退出', click: () => { quitting = true; app.quit(); } },
+    ]));
+    tray.setToolTip(`JiajiaBox - ${running ? '内核运行中' : '内核已停止'}`);
+  };
+  tray.on('click', () => { if (win && !win.isDestroyed() && win.isVisible()) win.hide(); else showWin(); });
+  svc.on('state', refresh);
+  refresh();
+}
+function showWin() {
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show(); win.focus();
+}
+
 function createWindow() {
   win = new BrowserWindow({
-    width: 1200, height: 780, minWidth: 980, minHeight: 640, backgroundColor: '#eef1f6', title: 'JiajiaBox',
+    width: 1220, height: 800, minWidth: 1000, minHeight: 660, backgroundColor: '#f3f5f9', title: 'JiajiaBox',
     autoHideMenuBar: true, show: !process.env.JIAJIA_SHOT_DIR,
+    icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   Menu.setApplicationMenu(null);
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  win.on('close', (e) => {
+    // close-to-tray: hide instead of quitting unless we are really quitting
+    if (!quitting && svc && svc.d.settings.closeToTray && tray) { e.preventDefault(); win.hide(); }
+  });
 }
 
 const handlers = {
@@ -64,6 +103,10 @@ const handlers = {
   logs: () => svc.core.logs.slice(-500),
   clearLogs: () => { svc.core.logs = []; },
   clearStats: () => svc.clearStats(),
+  winAction: (a) => {
+    if (!win) return;
+    if (a && a.type === 'minimize') win.minimize();
+  },
 };
 
 app.whenReady().then(async () => {
@@ -78,6 +121,7 @@ app.whenReady().then(async () => {
     try { return { data: await fn(args || {}) }; } catch (e) { return { error: e.message || String(e) }; }
   });
   createWindow();
+  buildTray();
   if (svc.d.settings.autoStartCore && svc.d.nodes.length) svc.start().catch(() => {});
   if (process.env.JIAJIA_SHOT_DIR) runShots(process.env.JIAJIA_SHOT_DIR);
 });
@@ -87,7 +131,7 @@ async function runShots(dir) {
   fs.mkdirSync(dir, { recursive: true });
   await new Promise((r) => win.webContents.once('did-finish-load', r));
   await new Promise((r) => setTimeout(r, Number(process.env.JIAJIA_SHOT_PRE || 1500)));
-  for (const page of ['home', 'nodes', 'subs', 'rules', 'conns', 'stats', 'logs', 'settings']) {
+  for (const page of (process.env.JIAJIA_SHOT_PAGES || 'home,nodes,subs,rules,conns,stats,logs,settings').split(',')) {
     await win.webContents.executeJavaScript(`window.__go && window.__go(${JSON.stringify(page)})`);
     await new Promise((r) => setTimeout(r, Number(process.env.JIAJIA_SHOT_WAIT || 700)));
     const img = await win.webContents.capturePage();
@@ -96,10 +140,10 @@ async function runShots(dir) {
   quitting = true; app.quit();
 }
 
-app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
-app.on('window-all-closed', () => app.quit());
+app.on('second-instance', () => showWin());
+app.on('window-all-closed', () => { if (quitting || !svc || !svc.d.settings.closeToTray || !tray) app.quit(); });
 app.on('before-quit', (e) => {
   if (quitting || !svc) return;
   e.preventDefault(); quitting = true;
-  svc.shutdown().catch(() => {}).finally(() => app.quit());
+  svc.shutdown().catch(() => {}).finally(() => { if (tray) tray.destroy(); app.quit(); });
 });

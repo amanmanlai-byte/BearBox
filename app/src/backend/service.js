@@ -8,14 +8,20 @@ const { parseSubscriptionBody, dedupeTags, fetchSubscription } = require('./subs
 const { parseLinks } = require('./links');
 const { SystemProxy } = require('./sysproxy');
 
+// Settings that only affect the UI or app shell; changing them must not restart a running core.
+const NO_RESTART_KEYS = ['setSystemProxy', 'autoStartCore', 'connectionTestURL', 'theme', 'closeToTray', 'autoUpdateSubsMin'];
+
 class AppService extends EventEmitter {
-  constructor({ userData, appRoot, resourcesPath, sysproxy, binary, fetchSub = fetchSubscription }) {
+  constructor({ userData, appRoot, resourcesPath, sysproxy, binary, fetchSub = fetchSubscription, autoUpdateTimer = null }) {
     super();
     this.store = new Store(path.join(userData, 'data.json'));
     this.core = new Core({ binary: binary || resolveCoreBinary(appRoot, resourcesPath), workDir: path.join(userData, 'core-run') });
     this.sysproxy = sysproxy || new SystemProxy();
     this.fetchSub = fetchSub;
     this.proxyApplied = false; this.starting = false; this.lastError = null; this.coreVersion = null;
+    this.routePreview = [];
+    this._autoTimer = autoUpdateTimer || { set: (fn, ms) => { const t = setInterval(fn, ms); t.unref(); return t; }, clear: (t) => clearInterval(t) };
+    this._autoHandle = null;
     this.core.on('log', (l) => this.emit('log', l));
     this.core.on('status', () => this.emit('state'));
     this.core.on('crashed', (code) => { this.lastError = `内核异常退出 (code ${code})`; this.cleanupProxy().finally(() => this.emit('state')); });
@@ -28,17 +34,33 @@ class AppService extends EventEmitter {
     this.coreVersion = await this.core.version();
     // crash recovery: a previous run may have left the system proxy pointing at a dead port
     if (this.d.sysproxyBackup && this.core.state === 'stopped') { try { await this.sysproxy.disable(this.d.sysproxyBackup.backup); } catch { /* best effort */ } this.d.sysproxyBackup = null; this.store.save(); }
+    this.scheduleAutoUpdate();
+  }
+
+  /** Background subscription auto-update. Interval comes from settings.autoUpdateSubsMin; 0 disables. */
+  scheduleAutoUpdate() {
+    if (this._autoHandle) { this._autoTimer.clear(this._autoHandle); this._autoHandle = null; }
+    const min = Number(this.d.settings.autoUpdateSubsMin);
+    if (!(min > 0)) return;
+    this._autoHandle = this._autoTimer.set(() => {
+      this.updateAllSubscriptions()
+        .then((rs) => rs.forEach((r) => this.core.pushLog(`INFO 订阅自动更新${r.error ? '失败: ' + r.error : '完成: ' + r.count + ' 个节点'}`)))
+        .catch((e) => this.core.pushLog('ERROR 订阅自动更新失败: ' + e.message));
+    }, min * 60 * 1000);
   }
 
   // ---------- state ----------
   state() {
     const d = this.d; const today = d.daily[dayKey()] || { up: 0, down: 0 };
+    // keep the effective-rule preview fresh even while the core is stopped (throws when there are no nodes)
+    try { this.build(); } catch { this.routePreview = []; }
     return {
       core: { ...this.core.status(), version: this.coreVersion, binary: this.core.binary, error: this.lastError },
       proxyApplied: this.proxyApplied, sysproxySupported: this.sysproxy.supported,
       settings: d.settings, subscriptions: d.subscriptions, rules: d.rules,
       nodes: d.nodes.map((n) => ({ id: n.id, subId: n.subId, tag: n.outbound.tag, type: n.outbound.type, server: n.outbound.server, port: n.outbound.server_port, latency: n.latency ?? null, latencyKind: n.latencyKind || null, testedAt: n.testedAt || null })),
       selectedId: d.selectedId, today, daily: d.daily,
+      routePreview: this.routePreview,
       session: { upTotal: this.core.upTotal, downTotal: this.core.downTotal, memory: this.core.memory },
       samples: this.core.samples.slice(-120),
     };
@@ -148,7 +170,9 @@ class AppService extends EventEmitter {
     const d = this.d;
     const nodes = d.nodes.map((n) => n.outbound);
     const sel = d.nodes.find((n) => n.id === d.selectedId)?.outbound.tag;
-    return buildConfig({ nodes, selectedTag: sel, settings: d.settings, userRules: d.rules, secret: d.secret, cachePath: 'cache.db' });
+    const r = buildConfig({ nodes, selectedTag: sel, settings: d.settings, userRules: d.rules, secret: d.secret, cachePath: 'cache.db' });
+    this.routePreview = r.routePreview;
+    return r;
   }
 
   async start() {
@@ -195,8 +219,9 @@ class AppService extends EventEmitter {
     if (port === api) throw new Error('代理端口与 API 端口不能相同');
     if (!/^https:\/\//i.test(String(s.connectionTestURL))) throw new Error('测速地址必须以 https:// 开头（内核会忽略 http:// 地址）');
     s.mixedPort = port; s.apiPort = api;
-    const needRestart = this.core.state === 'running' && JSON.stringify(s) !== JSON.stringify(this.d.settings) && Object.keys(patch).some((k) => !['setSystemProxy', 'autoStartCore', 'connectionTestURL'].includes(k));
+    const needRestart = this.core.state === 'running' && JSON.stringify(s) !== JSON.stringify(this.d.settings) && Object.keys(patch).some((k) => !NO_RESTART_KEYS.includes(k));
     this.d.settings = s; this.store.save(); this.emitState();
+    if (Object.keys(patch).some((k) => k === 'autoUpdateSubsMin')) this.scheduleAutoUpdate();
     if (needRestart) await this.restart();
     return { restarted: needRestart };
   }
@@ -220,7 +245,7 @@ class AppService extends EventEmitter {
   }
   async clearStats() { this.d.daily = {}; this.store.save(); this.emitState(); }
 
-  async shutdown() { try { await this.stop(); } finally { this.store.flush(); } }
+  async shutdown() { if (this._autoHandle) { this._autoTimer.clear(this._autoHandle); this._autoHandle = null; } try { await this.stop(); } finally { this.store.flush(); } }
 }
 
 module.exports = { AppService };

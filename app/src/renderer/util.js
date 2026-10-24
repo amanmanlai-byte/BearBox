@@ -1,5 +1,7 @@
 'use strict';
-// DOM helpers. Text is always inserted as text nodes: node names and logs come from subscriptions, so they are untrusted.
+// DOM helpers and shared UI utilities. Text is always inserted as text nodes:
+// node names, log lines and subscription content come from untrusted input.
+
 function h(tag, props, ...kids) {
   const e = document.createElement(tag); const post = [];
   for (const [k, v] of Object.entries(props || {})) {
@@ -14,8 +16,35 @@ function h(tag, props, ...kids) {
   for (const [k, v] of post) e[k] = v;
   return e;
 }
-const SVG = (d) => { const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor'); s.setAttribute('stroke-width', '1.8'); s.setAttribute('stroke-linecap', 'round'); s.setAttribute('stroke-linejoin', 'round'); const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', d); s.append(p); return s; };
+function svgIcon(d) {
+  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('fill', 'none'); s.setAttribute('stroke', 'currentColor');
+  s.setAttribute('stroke-width', '1.8'); s.setAttribute('stroke-linecap', 'round'); s.setAttribute('stroke-linejoin', 'round');
+  for (const dd of [].concat(d)) { const p = document.createElementNS('http://www.w3.org/2000/svg', 'path'); p.setAttribute('d', dd); s.append(p); }
+  return s;
+}
 
+// 24x24 line icon paths
+const ICONS = {
+  home: 'M3 11.5 12 4l9 7.5M5.5 10.5V20h5v-6h3v6h5v-9.5',
+  nodes: 'M12 3v4M12 17v4M3 12h4M17 12h4M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z',
+  subs: 'M5 4h14v16H5zM9 9h6M9 13h6M9 17h3',
+  rules: 'M4 6h16M4 12h10M4 18h6M18 14l3 3-3 3',
+  conns: 'M8 7h8M8 17h8M5 4v6M19 14v6M5 10a2 2 0 1 0 0-4M19 20a2 2 0 1 0 0-4',
+  stats: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
+  logs: 'M4 5h16M4 10h16M4 15h10M4 20h7',
+  settings: ['M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z', 'M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2-1.2L14 3h-4l-.6 2.7a7 7 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2 1.2L10 21h4l.6-2.7a7 7 0 0 0 2-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z'],
+  power: 'M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0',
+  bolt: 'M13 2 4.5 13.5H11L9.5 22 19 10h-6.5L13 2z',
+  copy: 'M9 9h11v11H9zM5 15H4V4h11v1',
+  plus: 'M12 5v14M5 12h14',
+  trash: 'M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6',
+  refresh: 'M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5',
+  inbox: 'M4 13h4l2 3h4l2-3h4M4 13 6 5h12l2 8v6H4v-6z',
+  close: 'M6 6l12 12M18 6 6 18',
+};
+
+// ---------- formatters ----------
 function fmtBytes(n) {
   if (n == null || !Number.isFinite(n)) return '-';
   const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0; let v = n;
@@ -25,20 +54,57 @@ function fmtBytes(n) {
 const fmtSpeed = (n) => fmtBytes(n) + '/s';
 function fmtDur(ms) { const s = Math.max(0, Math.floor(ms / 1000)); const m = Math.floor(s / 60); const hh = Math.floor(m / 60); return hh ? `${hh}时${m % 60}分` : m ? `${m}分${s % 60}秒` : `${s}秒`; }
 function fmtTime(t) { if (!t) return '从未'; const d = new Date(t); const p = (x) => String(x).padStart(2, '0'); return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
+function fmtDate(t) { if (!t) return '-'; const d = new Date(t); const p = (x) => String(x).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; }
 function latClass(n) { if (n.testedAt == null) return 'none'; if (n.latency == null) return 'bad'; return n.latency <= 200 ? 'good' : n.latency <= 500 ? 'mid' : 'slow'; }
-const LAT_COLOR = { good: 'var(--ok)', mid: '#7cc24a', slow: 'var(--warn)', bad: 'var(--bad)', none: '#c3cbdb' };
+const LAT_COLOR = { good: 'var(--ok)', mid: '#84cc16', slow: 'var(--warn)', bad: 'var(--bad)', none: 'var(--ink-3)' };
+const LAT_NAME = { good: '良好 ≤200ms', mid: '一般 ≤500ms', slow: '较慢 >500ms', bad: '超时/失败', none: '未测试' };
 
-function toast(msg, isErr) {
-  const t = h('div', { class: 'toast' + (isErr ? ' err' : '') }, msg);
-  document.getElementById('toasts').append(t); setTimeout(() => t.remove(), isErr ? 6500 : 3200);
-}
+// ---------- api plumbing ----------
 async function api(name, args) { const r = await window.jj.call(name, args); if (r.error) throw new Error(r.error); return r.data; }
 async function act(fn, okMsg, btn) {
   if (btn) btn.disabled = true;
   try { const r = await fn(); if (okMsg) toast(typeof okMsg === 'function' ? okMsg(r) : okMsg); return r; }
   catch (e) { toast(e.message, true); } finally { if (btn) btn.disabled = false; }
 }
-function modal(title, body, actions) {
-  const bg = h('div', { class: 'modal-bg', onclick: (e) => { if (e.target === bg) bg.remove(); } }, h('div', { class: 'modal' }, h('h3', {}, title), body, h('div', { class: 'row', style: { marginTop: '16px', justifyContent: 'flex-end' } }, actions(() => bg.remove()))));
+function toast(msg, isErr) {
+  const t = h('div', { class: 'toast' + (isErr ? ' err' : '') }, msg);
+  document.getElementById('toasts').append(t); setTimeout(() => t.remove(), isErr ? 6500 : 3200);
+}
+function modal(title, body, actions, wide) {
+  const bg = h('div', { class: 'modal-bg', onclick: (e) => { if (e.target === bg) bg.remove(); } },
+    h('div', { class: 'modal', style: wide ? { width: 'min(720px, 94vw)' } : null }, h('h3', {}, title), body,
+      h('div', { class: 'modal-foot' }, actions(() => bg.remove()))));
   document.body.append(bg); return bg;
 }
+
+// ---------- page building blocks ----------
+function pageHead(title, subtitle, ...actions) {
+  return h('div', { class: 'page-head' }, h('div', {}, h('h1', {}, title), subtitle ? h('p', { class: 'sub-title' }, subtitle) : null), h('div', { class: 'sp' }), h('div', { class: 'actions' }, actions));
+}
+function emptyState(icon, title, text, ...actions) {
+  return h('div', { class: 'card' }, h('div', { class: 'empty' }, svgIcon(ICONS[icon] || ICONS.inbox), h('b', {}, title), h('div', { class: 'note' }, text), actions.length ? h('div', { class: 'actions' }, actions) : null));
+}
+const goto = (p) => window.__go(p);
+
+/**
+ * Preserve the focused input across a full page re-render.
+ * Elements opt in with data-keep="key"; call keepFocus.save() before replacing
+ * the DOM and keepFocus.restore(root) after.
+ */
+const keepFocus = {
+  save() {
+    const a = document.activeElement;
+    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA' || a.tagName === 'SELECT') && a.dataset.keep) {
+      this._s = { key: a.dataset.keep, value: a.value, selStart: a.selectionStart, selEnd: a.selectionEnd, tag: a.tagName };
+    } else this._s = null;
+  },
+  restore(root) {
+    if (!this._s) return;
+    const el = root.querySelector(`[data-keep="${CSS.escape(this._s.key)}"]`);
+    if (el && el.tagName === this._s.tag) {
+      el.value = this._s.value; el.focus();
+      try { el.setSelectionRange(this._s.selStart, this._s.selEnd); } catch { /* not a text input */ }
+    }
+    this._s = null;
+  },
+};

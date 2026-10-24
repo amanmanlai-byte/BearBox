@@ -35,6 +35,28 @@ function resolveCoreBinary(appRoot, resourcesPath) {
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** Map a Clash API connection object to the shape the UI uses. Pure, unit tested. */
+function mapConnection(x) {
+  const m = x.metadata || {};
+  const procPath = m.processPath || m.process || '';
+  const proc = procPath ? String(procPath).split(/[\\/]/).pop() : '';
+  return {
+    id: x.id,
+    host: m.sniffHost || m.host || m.destinationIP || '',
+    port: m.destinationPort,
+    network: m.network,
+    type: m.type,
+    source: m.sourceIP,
+    process: proc,
+    upload: x.upload,
+    download: x.download,
+    start: x.start,
+    chains: x.chains,
+    rule: x.rule,
+    rulePayload: x.rulePayload,
+  };
+}
+
 function portFree(port, host = '127.0.0.1') {
   return new Promise((resolve) => {
     const s = net.createServer();
@@ -153,12 +175,8 @@ class Core extends EventEmitter {
     const dUp = this.last ? Math.max(0, up - this.last.up) : 0; const dDown = this.last ? Math.max(0, down - this.last.down) : 0;
     this.last = { t: now, up, down };
     this.upTotal = up; this.downTotal = down; this.memory = c.memory || 0;
-    this.connections = (c.connections || []).map((x) => ({
-      id: x.id, host: x.metadata.host || x.metadata.destinationIP, port: x.metadata.destinationPort, network: x.metadata.network,
-      type: x.metadata.type, source: x.metadata.sourceIP, upload: x.upload, download: x.download,
-      start: x.start, chains: x.chains, rule: x.rule, rulePayload: x.rulePayload,
-    }));
-    const sample = { t: now, up: upSpeed, down: downSpeed };
+    this.connections = (c.connections || []).map(mapConnection);
+    const sample = { t: now, up: upSpeed, down: downSpeed, conn: this.connections.length, mem: this.memory };
     this.samples.push(sample); if (this.samples.length > 300) this.samples.shift();
     this.emit('tick', { ...sample, upTotal: up, downTotal: down, deltaUp: dUp, deltaDown: dDown, connections: this.connections.length, memory: this.memory });
   }
@@ -184,4 +202,4 @@ function tcpPing(host, port, timeout = 3000) {
   });
 }
 
-module.exports = { Core, resolveCoreBinary, tcpPing, portFree, isWindowsAdmin, validateTunPrerequisites };
+module.exports = { Core, resolveCoreBinary, tcpPing, portFree, isWindowsAdmin, validateTunPrerequisites, mapConnection };
