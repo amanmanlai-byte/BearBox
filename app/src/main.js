@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { AppService } = require('./backend/service');
 const { isWindowsAdmin } = require('./backend/core');
+const { resolveHost } = require('./backend/geo');
 
 if (process.env.JIAJIA_NOSANDBOX) app.commandLine.appendSwitch('no-sandbox');
 if (process.env.JIAJIA_USERDATA) app.setPath('userData', process.env.JIAJIA_USERDATA);
@@ -115,7 +116,54 @@ const handlers = {
     if (!win) return;
     if (a && a.type === 'minimize') win.minimize();
   },
+  // ---------- wallpaper ----------
+  pickWallpaper: async () => {
+    const r = await dialog.showOpenDialog(win, { title: '选择壁纸图片', filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp'] }], properties: ['openFile'] });
+    if (r.canceled || !r.filePaths[0]) return { canceled: true };
+    const src = r.filePaths[0];
+    const m = /\.(jpg|jpeg|png|webp|bmp)$/i.exec(src);
+    if (!m) throw new Error('不支持的图片格式');
+    const dir = app.getPath('userData');
+    const dest = path.join(dir, 'wallpaper.' + m[1].toLowerCase());
+    fs.copyFileSync(src, dest);
+    for (const f of fs.readdirSync(dir)) if (/^wallpaper\./.test(f) && path.join(dir, f) !== dest) { try { fs.unlinkSync(path.join(dir, f)); } catch { /* ignore */ } }
+    await svc.setSettings({ wallpaper: dest });
+    return { ok: true, path: dest };
+  },
+  clearWallpaper: async () => {
+    const dir = app.getPath('userData');
+    for (const f of fs.readdirSync(dir)) if (/^wallpaper\./.test(f)) { try { fs.unlinkSync(path.join(dir, f)); } catch { /* ignore */ } }
+    await svc.setSettings({ wallpaper: '' });
+    return { ok: true };
+  },
+  // ---------- geo / map ----------
+  geoSelf: (a) => svc.geo.self({ direct: !!(a && a.direct) }),
+  geoIps: async (a) => {
+    const ips = [...new Set((a.ips || []).filter(Boolean))].slice(0, 8);
+    const out = {};
+    await Promise.all(ips.map(async (ip) => { try { out[ip] = await svc.geo.lookup(ip); } catch (e) { out[ip] = { error: e.message }; } }));
+    return out;
+  },
+  geoNodes: async () => {
+    // locations for node servers: DNS resolve (direct) + cached ip.sb lookups
+    const servers = [...new Set(svc.d.nodes.map((n) => n.outbound.server))].slice(0, 12);
+    const out = {};
+    await Promise.all(servers.map(async (server) => {
+      const ip = await resolveHost(server).catch(() => null);
+      if (!ip) { out[server] = { error: 'DNS 解析失败' }; return; }
+      try { out[server] = { ip, ...(await svc.geo.lookup(ip)) }; } catch (e) { out[server] = { ip, error: e.message }; }
+    }));
+    return out;
+  },
+  worldGeo: () => {
+    if (worldGeoCache) return worldGeoCache;
+    for (const p of [path.join(process.resourcesPath || '', 'geo', 'world.geo.json'), path.join(app.getAppPath(), 'geo', 'world.geo.json')]) {
+      try { worldGeoCache = JSON.parse(fs.readFileSync(p, 'utf8')); return worldGeoCache; } catch { /* next */ }
+    }
+    throw new Error('找不到内置世界地图数据（geo/world.geo.json）');
+  },
 };
+let worldGeoCache = null;
 
 app.whenReady().then(async () => {
   // Running straight out of an archive preview (WinRAR/7-Zip temp extraction): warn once.
@@ -151,7 +199,7 @@ async function runShots(dir) {
   if (process.env.JIAJIA_PROBE) {
     try { console.log('PROBE', JSON.stringify(await win.webContents.executeJavaScript(process.env.JIAJIA_PROBE))); } catch (e) { console.log('PROBE_ERR', e.message); }
   }
-  for (const page of (process.env.JIAJIA_SHOT_PAGES || 'home,nodes,subs,rules,conns,stats,logs,settings').split(',')) {
+  for (const page of (process.env.JIAJIA_SHOT_PAGES || 'home,nodes,subs,rules,conns,geo,stats,logs,settings').split(',')) {
     await win.webContents.executeJavaScript(`window.__go && window.__go(${JSON.stringify(page)})`);
     await new Promise((r) => setTimeout(r, Number(process.env.JIAJIA_SHOT_WAIT || 700)));
     const img = await win.webContents.capturePage();

@@ -66,6 +66,19 @@ body {
   margin: 0; font-family: var(--font); font-size: 13.5px; color: var(--ink); background: var(--bg);
   -webkit-font-smoothing: antialiased; user-select: none; overflow: hidden;
 }
+
+/* ---------------- wallpaper ---------------- */
+#wp, #wpveil { position: fixed; inset: 0; pointer-events: none; background-size: cover; background-position: center; background-repeat: no-repeat; }
+#wp { z-index: -2; opacity: 0; }
+#wpveil { z-index: -1; background: var(--bg); opacity: 0; }
+body.wallpaper #wp { opacity: var(--wp-o, .35); filter: blur(var(--wp-blur, 0px)); }
+body.wallpaper #wpveil { opacity: var(--wp-veil, .55); }
+body.wallpaper .card { background: color-mix(in srgb, var(--card) 84%, transparent); }
+body.wallpaper .side { background: color-mix(in srgb, var(--sidebar) 90%, transparent); }
+body.wallpaper .logs { background: color-mix(in srgb, var(--card) 90%, transparent); }
+body.wallpaper .tbl th { background: color-mix(in srgb, var(--card-2) 92%, transparent); }
+input[type=range] { accent-color: var(--accent); width: 100%; }
+
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ink-3) 40%, transparent); border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
 ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--ink-3) 70%, transparent); border: 2px solid transparent; background-clip: content-box; }

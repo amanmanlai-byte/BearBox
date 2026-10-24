@@ -170,6 +170,7 @@ class DailyBars {
 function drawDonut(canvas, parts, centerText, centerSub) {
   const { g, w, h: H } = prep(canvas);
   const cx = w / 2; const cy = H / 2; const R = Math.min(w, H) / 2 - 6; const r = R * 0.68;
+  if (R < 3) return; // canvas not laid out yet (zero size): skip, next draw paints it
   const total = parts.reduce((a, p) => a + p.value, 0);
   if (!total) {
     g.strokeStyle = CVAR('--line-2'); g.lineWidth = R - r;
@@ -209,4 +210,101 @@ function drawSpark(canvas, values, { color = '--down', fill = true } = {}) {
   g.beginPath(); smoothPath(g, pts); g.strokeStyle = stroke; g.lineWidth = 1.6; g.lineJoin = 'round'; g.stroke();
   const lastP = pts[pts.length - 1];
   g.beginPath(); g.arc(lastP.x, lastP.y, 2.4, 0, Math.PI * 2); g.fillStyle = stroke; g.fill();
+}
+
+// ---------------- world map with day/night terminator ----------------
+
+/** Sub-solar point for a given Date (declination + longitude), good to ~1 degree. */
+function subsolarPoint(date) {
+  const start = Date.UTC(date.getUTCFullYear(), 0, 0);
+  const n = (date.getTime() - start) / 86400000; // day of year, fractional
+  const decl = -23.44 * Math.cos((2 * Math.PI / 365.24) * (n + 10)); // degrees
+  const utcH = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+  const lon = -15 * (utcH - 12); // ignore equation of time (±4°, invisible at map scale)
+  return { decl, lon: ((lon + 540) % 360) - 180 };
+}
+
+/**
+ * Draw an equirectangular world map with a real-time day/night terminator.
+ * world: GeoJSON FeatureCollection. opts.markers = [{lon,lat,color,r,label,pulse}],
+ * opts.arcs = [{from:{lon,lat}, to:{lon,lat}, color, width}] (great-circle-ish quadratic).
+ */
+function drawWorldMap(canvas, world, opts = {}) {
+  const { g, w, h: H } = prep(canvas);
+  const PX = (lon) => ((lon + 180) / 360) * w;
+  const PY = (lat) => ((90 - lat) / 180) * H;
+
+  // ocean
+  g.fillStyle = CVAR('--card-2');
+  g.fillRect(0, 0, w, H);
+  // graticule
+  g.strokeStyle = CVAR('--line-2'); g.lineWidth = 1;
+  for (let lon = -150; lon <= 150; lon += 30) { g.beginPath(); g.moveTo(PX(lon), 0); g.lineTo(PX(lon), H); g.stroke(); }
+  for (let lat = -60; lat <= 60; lat += 30) { g.beginPath(); g.moveTo(0, PY(lat)); g.lineTo(w, PY(lat)); g.stroke(); }
+
+  // land
+  g.fillStyle = CVAR('--ink');
+  g.globalAlpha = 0.10;
+  g.strokeStyle = CVAR('--ink-3'); g.lineWidth = 0.7;
+  for (const f of world.features || []) {
+    const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates : [];
+    for (const poly of polys) {
+      for (const ring of poly) {
+        if (!ring.length) continue;
+        g.beginPath();
+        for (let i = 0; i < ring.length; i++) { const x = PX(ring[i][0]); const y = PY(ring[i][1]); if (i === 0) g.moveTo(x, y); else g.lineTo(x, y); }
+        g.closePath(); g.fill(); g.globalAlpha = 0.28; g.stroke(); g.globalAlpha = 0.10;
+      }
+    }
+  }
+  g.globalAlpha = 1;
+
+  // night hemisphere
+  const now = opts.date || new Date();
+  const { decl, lon: subLon } = subsolarPoint(now);
+  const dRad = (decl * Math.PI) / 180;
+  g.fillStyle = 'rgba(4, 8, 22, 0.45)';
+  g.beginPath();
+  const closeSouth = decl > 0; // night contains the pole opposite the sun's declination
+  const steps = 90;
+  const pts = [];
+  for (let i = 0; i <= steps; i++) {
+    const lon = -180 + (360 * i) / steps;
+    const hAngle = ((lon - subLon) * Math.PI) / 180;
+    const lat = Math.atan(-Math.cos(hAngle) / Math.tan(dRad)) / (Math.PI / 180);
+    pts.push([PX(lon), PY(lat)]);
+  }
+  g.moveTo(pts[0][0], pts[0][1]);
+  for (const p of pts) g.lineTo(p[0], p[1]);
+  const poleY = closeSouth ? H : 0;
+  g.lineTo(w, poleY); g.lineTo(0, poleY);
+  g.closePath(); g.fill();
+
+  // arcs (below markers)
+  for (const a of opts.arcs || []) {
+    const x1 = PX(a.from.lon); const y1 = PY(a.from.lat); const x2 = PX(a.to.lon); const y2 = PY(a.to.lat);
+    const mx = (x1 + x2) / 2; const my = (y1 + y2) / 2 - Math.min(90, Math.hypot(x2 - x1, y2 - y1) * 0.25);
+    g.beginPath(); g.moveTo(x1, y1); g.quadraticCurveTo(mx, my, x2, y2);
+    g.strokeStyle = a.color || CVAR('--accent'); g.lineWidth = a.width || 1.4; g.globalAlpha = a.alpha == null ? 0.75 : a.alpha; g.stroke(); g.globalAlpha = 1;
+  }
+
+  // markers
+  for (const m of opts.markers || []) {
+    const x = PX(m.lon); const y = PY(m.lat); const r = m.r || 4;
+    if (m.pulse) {
+      const t = (Date.now() % 1600) / 1600;
+      g.beginPath(); g.arc(x, y, r + t * 12, 0, Math.PI * 2);
+      g.strokeStyle = m.color; g.globalAlpha = (1 - t) * 0.5; g.lineWidth = 1.5; g.stroke(); g.globalAlpha = 1;
+    }
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fillStyle = m.color; g.fill();
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.strokeStyle = CVAR('--card'); g.lineWidth = 1.5; g.stroke();
+    if (m.label) {
+      g.font = '600 11px ' + CVAR('--font');
+      const tw = g.measureText(m.label).width;
+      const bx = Math.min(Math.max(x + 8, 4), w - tw - 14); const by = Math.max(14, y - 10);
+      g.fillStyle = CVAR('--ink'); roundRect(g, bx - 4, by - 9, tw + 8, 15, 4); g.globalAlpha = 0.85; g.fill(); g.globalAlpha = 1;
+      g.fillStyle = CVAR('--bg'); g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillText(m.label, bx, by - 1);
+    }
+  }
+  return { subsolar: { decl, lon: subLon } };
 }

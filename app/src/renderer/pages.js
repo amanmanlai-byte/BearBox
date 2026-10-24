@@ -73,7 +73,9 @@ PAGES.home = () => {
   };
   const connTile = mkTile('活动连接', h('div', { class: 'v' }, running ? '0' : '-'), null, true, '--down');
   const sessTile = mkTile('本次运行流量', h('div', { class: 'duo' }, h('div', {}, h('div', { class: 'v down-c', ref: 'sd' }, running ? '↓ ' + fmtBytes(S.session.downTotal) : '-')), h('div', {}, h('div', { class: 'v up-c', ref: 'su' }, running ? '↑ ' + fmtBytes(S.session.upTotal) : '-'))), null);
-  const todayTile = mkTile('今日流量', h('div', { class: 'duo' }, h('div', {}, h('div', { class: 'v down-c' }, '↓ ' + fmtBytes(S.today.down))), h('div', {}, h('div', { class: 'v up-c' }, '↑ ' + fmtBytes(S.today.up)))), null);
+  const tdV = h('div', { class: 'v down-c' }, '↓ ' + fmtBytes(S.today.down));
+  const tuV = h('div', { class: 'v up-c' }, '↑ ' + fmtBytes(S.today.up));
+  const todayTile = mkTile('今日流量', h('div', { class: 'duo' }, h('div', {}, tdV), h('div', {}, tuV)), null);
   const memTile = mkTile('内核内存占用', h('div', { class: 'v' }, running ? fmtBytes(S.session.memory) : '-'), null, true, '--up');
   const tiles = h('div', { class: 'grid cols-4', style: { margin: '14px 0' } }, connTile.el, sessTile.el, todayTile.el, memTile.el);
 
@@ -115,6 +117,8 @@ PAGES.home = () => {
     const win = X.samples.slice(-120);
     peakV.textContent = running && win.length ? `峰值 ↓ ${fmtSpeed(Math.max(0, ...win.map((s) => s.down || 0)))}\n峰值 ↑ ${fmtSpeed(Math.max(0, ...win.map((s) => s.up || 0)))}` : '';
     peakV.style.whiteSpace = 'pre-line';
+    const today = (tk && tk.today) || X.S.today;
+    if (today) { tdV.textContent = '↓ ' + fmtBytes(today.down || 0); tuV.textContent = '↑ ' + fmtBytes(today.up || 0); }
     if (running) {
       if (tk) { connV.textContent = String(tk.connections); memV.textContent = fmtBytes(tk.memory); sdV.textContent = '↓ ' + fmtBytes(tk.downTotal); suV.textContent = '↑ ' + fmtBytes(tk.upTotal); }
       else { connV.textContent = String(last ? last.conn || 0 : 0); }
@@ -126,7 +130,11 @@ PAGES.home = () => {
   return {
     el,
     tick: (tk) => paint(tk),
-    resize: () => { paint(null); dailyChart.update(days7); },
+    state(S2) { // structural change happened elsewhere (e.g. daily history) - refresh today numbers in place
+      tdV.textContent = '↓ ' + fmtBytes(S2.today.down || 0);
+      tuV.textContent = '↑ ' + fmtBytes(S2.today.up || 0);
+    },
+    resize: () => { paint(null); dailyChart.update(lastDays(X.S.daily, 7)); },
   };
 };
 
@@ -167,40 +175,55 @@ PAGES.nodes = () => {
   if (X.nodeSort === 'latency') list = list.slice().sort((a, b) => (a.latency ?? 1e9) - (b.latency ?? 1e9));
   else if (X.nodeSort === 'name') list = list.slice().sort((a, b) => a.tag.localeCompare(b.tag, 'zh'));
 
-  // distribution
-  const counts = { good: 0, mid: 0, slow: 0, bad: 0, none: 0 };
-  S.nodes.forEach((n) => counts[latClass(n)]++);
-  const total = Math.max(1, S.nodes.length);
+  // distribution (legend/hint rebuilt in place on latency-only updates)
   const donut = h('canvas', { class: 'donut', 'aria-label': '节点状态分布' });
+  const legendEl = h('div', { class: 'legend' });
+  const hintEl = h('span', { class: 'hint' });
+  const countNodes = (nodes) => { const c = { good: 0, mid: 0, slow: 0, bad: 0, none: 0 }; nodes.forEach((n) => c[latClass(n)]++); return c; };
+  let counts = countNodes(S.nodes);
+  const refreshDist = (nodes) => {
+    counts = countNodes(nodes);
+    const total = Math.max(1, nodes.length);
+    hintEl.textContent = `共 ${nodes.length} 个节点 · 已测 ${nodes.filter((n) => n.latency != null).length} 个`;
+    legendEl.replaceChildren(...Object.keys(counts).map((k) => h('div', { class: 'li' },
+      h('i', { class: 'c-' + k, style: { width: '9px', height: '9px', borderRadius: '3px' } }), LAT_NAME[k],
+      h('div', { class: 'bar-mini' }, h('i', { style: { width: (counts[k] / total) * 100 + '%', background: LAT_COLOR[k] } })),
+      h('b', {}, String(counts[k])))));
+    drawDist();
+  };
+  const drawDist = () => {
+    const colors = { good: CVAR('--ok'), mid: '#84cc16', slow: CVAR('--warn'), bad: CVAR('--bad'), none: CVAR('--ink-3') };
+    drawDonut(donut, Object.keys(counts).map((k) => ({ value: counts[k], color: colors[k] })), String(S.nodes.length), '个节点');
+  };
   const distCard = h('div', { class: 'card', style: { marginBottom: '14px' } },
-    h('h2', {}, '状态分布', h('span', { class: 'hint' }, `共 ${S.nodes.length} 个节点 · 已选 ${S.selectedId ? 1 : 0} 个`)),
-    h('div', { class: 'dist-wrap' }, donut,
-      h('div', { class: 'legend' }, Object.keys(counts).map((k) => h('div', { class: 'li' },
-        h('i', { class: 'c-' + k, style: { width: '9px', height: '9px', borderRadius: '3px' } }), LAT_NAME[k],
-        h('div', { class: 'bar-mini' }, h('i', { style: { width: (counts[k] / total) * 100 + '%', background: LAT_COLOR[k] } })),
-        h('b', {}, String(counts[k])))))),
+    h('h2', {}, '状态分布', hintEl),
+    h('div', { class: 'dist-wrap' }, donut, legendEl),
     h('div', { class: 'note', style: { marginTop: '10px' } },
       '测速是 URL Test：内核经每个节点向测速地址发起真实 HTTPS 请求。内核未运行时会自动临时启动内核（不动系统代理），测完自动关闭；仅当内核无法启动时才降级为 TCP 连接测试，并在结果中标注。'));
 
-  const maxLat = Math.max(600, ...S.nodes.map((n) => n.latency || 0));
-  const rows = list.map((n) => {
+  const maxLatOf = (nodes) => Math.max(600, ...nodes.map((n) => n.latency || 0));
+  let maxLat = maxLatOf(S.nodes);
+  const latCellFor = (n) => {
     const cls = latClass(n);
-    const lat = h('div', { class: 'lat' },
+    return h('td', {}, h('div', { class: 'lat' },
       h('div', { class: 'bar' }, n.latency != null ? h('b', { style: { width: Math.max(4, (n.latency / maxLat) * 100) + '%', background: LAT_COLOR[cls] } }) : null),
       h('span', { style: { color: cls === 'bad' ? 'var(--bad)' : 'var(--ink-2)', fontSize: '11.5px', fontVariantNumeric: 'tabular-nums' } },
         n.latency != null ? n.latency + ' ms' : cls === 'bad' ? '超时' : '未测试'),
-      n.latencyKind ? h('span', { class: 'tag', style: { marginLeft: '6px' } }, n.latencyKind === 'url' ? 'HTTPS' : 'TCP') : null);
-    return h('tr', { class: 'pick' + (n.id === S.selectedId ? ' sel' : ''), onclick: () => act(() => api('selectNode', { id: n.id }), `已切换到 ${n.tag}`) },
+      n.latencyKind ? h('span', { class: 'tag', style: { marginLeft: '6px' } }, n.latencyKind === 'url' ? 'HTTPS' : 'TCP') : null));
+  };
+  const rows = list.map((n) => {
+    const tr = h('tr', { class: 'pick' + (n.id === S.selectedId ? ' sel' : ''), 'data-nid': n.id, onclick: () => act(() => api('selectNode', { id: n.id }), `已切换到 ${n.tag}`) },
       h('td', { style: { width: '34px' } }, h('span', { class: 'radio' + (n.id === S.selectedId ? ' on' : '') })),
       h('td', { title: n.tag }, h('div', { style: { overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '260px', whiteSpace: 'nowrap' } }, n.tag),
         n.subId ? h('div', { class: 'mut2', style: { fontSize: '11px' } }, subName(n.subId)) : null),
       h('td', {}, h('span', { class: 'tag' }, n.type)),
       h('td', { class: 'mono mut2' }, `${n.server}:${n.port}`),
-      h('td', {}, lat),
+      latCellFor(n),
       h('td', { class: 'r', style: { whiteSpace: 'nowrap' } },
         h('button', { class: 'btn small', title: 'URL 测速', onclick: (e) => { e.stopPropagation(); act(() => api('testNodes', { ids: [n.id] }), (r) => r.mode === 'url' ? 'URL 测速完成' : '内核未能启动，已降级为 TCP 测试'); } }, '测速'), ' ',
         h('button', { class: 'btn small ghost', title: '详情', onclick: (e) => { e.stopPropagation(); nodeDetail(n); } }, 'JSON'), ' ',
         h('button', { class: 'btn small danger', onclick: (e) => { e.stopPropagation(); if (confirm(`删除节点“${n.tag}”？`)) act(() => api('removeNode', { id: n.id }), '已删除'); } }, '删除')));
+    return tr;
   });
 
   const search = h('input', { type: 'text', placeholder: '搜索名称、地址、协议、订阅', value: X.nodeFilter, style: { width: '230px' }, 'aria-label': '搜索节点', 'data-keep': 'nodeFilter',
@@ -221,13 +244,27 @@ PAGES.nodes = () => {
         h('tbody', {}, rows.length ? rows : h('tr', {}, h('td', { colspan: 6, class: 'mut2', style: { textAlign: 'center', padding: '26px' } }, '没有匹配的节点')))));
 
   const testAll = h('button', { class: 'btn primary', disabled: S.nodes.length === 0, onclick: (e) => act(() => api('testNodes', {}), (r) => r.mode === 'url' ? `URL 测速完成（${r.count} 个节点，并发 ${S.settings.testConcurrency}）` : `内核未能启动，已降级为 TCP 连接测试（${r.error || '未知原因'}）`, e.currentTarget) }, 'URL 测速全部');
-  const drawDist = () => {
-    const colors = { good: CVAR('--ok'), mid: '#84cc16', slow: CVAR('--warn'), bad: CVAR('--bad'), none: CVAR('--ink-3') };
-    drawDonut(donut, Object.keys(counts).map((k) => ({ value: counts[k], color: colors[k] })), String(S.nodes.length), '个节点');
+  const tbody = body.querySelector ? body.querySelector('tbody') : null;
+  setTimeout(() => refreshDist(S.nodes), 0); // draw after layout so the canvas has a size
+  return {
+    el: h('div', { class: 'page' }, pageHead('节点', `${S.nodes.length} 个节点 · 点击行切换当前节点`, testUrlSelect(), search, subSel, sortSel, testAll), distCard, body),
+    resize: drawDist,
+    /** latency-only state changes: patch cells in place instead of rebuilding the table (no flicker) */
+    state(S2) {
+      if (!tbody) return;
+      maxLat = maxLatOf(S2.nodes);
+      for (const n of S2.nodes) {
+        const tr = tbody.querySelector(`tr[data-nid="${CSS.escape(n.id)}"]`);
+        if (!tr) continue;
+        tr.replaceChild(latCellFor(n), tr.children[4]);
+      }
+      if (X.nodeSort === 'latency') {
+        const order = S2.nodes.slice().sort((a, b) => (a.latency ?? 1e9) - (b.latency ?? 1e9)).map((n) => n.id);
+        for (const id of order) { const tr = tbody.querySelector(`tr[data-nid="${CSS.escape(id)}"]`); if (tr) tbody.appendChild(tr); }
+      }
+      refreshDist(S2.nodes);
+    },
   };
-  setTimeout(drawDist, 0);
-  return { el: h('div', { class: 'page' }, pageHead('节点', `${S.nodes.length} 个节点 · 点击行切换当前节点`, testUrlSelect(), search, subSel, sortSel, testAll), distCard, body),
-    resize: drawDist };
 };
 
 function nodeDetail(n) {
@@ -444,6 +481,111 @@ PAGES.conns = () => {
   };
 };
 
+// ================================================================ geo map
+let WORLD_GEO = null; // world GeoJSON loaded once per app run
+PAGES.geo = () => {
+  const S = X.S;
+  const running = isRunning();
+  const selNode = S.nodes.find((n) => n.id === S.selectedId);
+
+  // ---- info cards
+  const mkInfoCard = (title) => {
+    const main = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', minHeight: '58px' } }, h('span', { class: 'mut2' }, '查询中…'));
+    return { el: h('div', { class: 'card tile' }, h('div', { class: 'k' }, title), main), main };
+  };
+  const exitInfo = mkInfoCard(running ? '出口位置（经当前节点）' : '本机公网位置（直连）');
+  const directInfo = mkInfoCard('直连公网位置');
+  const nodeInfo = mkInfoCard('当前节点服务器');
+  const fillInfo = (el, geo, extra) => {
+    el.replaceChildren();
+    if (!geo) { el.append(h('span', { class: 'mut2' }, '无数据')); return; }
+    if (geo.error) { el.append(h('span', { class: 'err' }, '查询失败：' + geo.error)); return; }
+    el.append(
+      h('b', { style: { fontSize: '14px' } }, geo.ip || '-'),
+      h('span', { class: 'mut' }, [geo.country, geo.region, geo.city].filter(Boolean).join(' · ') || '-'),
+      h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, [geo.isp, geo.asn ? 'AS' + geo.asn : null].filter(Boolean).join(' · ') || ''),
+      extra || null);
+  };
+
+  // ---- map
+  const canvas = h('canvas', { style: { width: '100%', height: '440px', display: 'block', borderRadius: '8px' } });
+  const state = { exit: null, direct: null, node: null, targets: [] }; // markers {lon,lat,...}
+
+  const draw = () => {
+    if (!WORLD_GEO) return;
+    const markers = []; const arcs = [];
+    const AC = CVAR('--accent'); const DC = CVAR('--down'); const UC = CVAR('--up');
+    if (state.direct && !state.direct.error) markers.push({ ...state.direct, color: UC, r: 3.5, label: '直连' });
+    if (state.exit && !state.exit.error) markers.push({ ...state.exit, color: AC, r: 5, label: state.exit.viaProxy === false && running ? '出口' : '本机', pulse: true });
+    if (state.node && !state.node.error) markers.push({ ...state.node, color: DC, r: 4.5, label: '节点' });
+    if (state.exit && !state.exit.error && state.node && !state.node.error) arcs.push({ from: state.exit, to: state.node, color: AC, width: 2, alpha: 0.85 });
+    const shown = new Set();
+    for (const t of state.targets) {
+      if (shown.has(t.lon + ',' + t.lat)) continue;
+      shown.add(t.lon + ',' + t.lat);
+      markers.push({ lon: t.lon, lat: t.lat, color: CVAR('--ink-3'), r: 2.5 });
+      if (state.node && !state.node.error) arcs.push({ from: state.node, to: t, color: DC, width: 1, alpha: 0.35 });
+    }
+    drawWorldMap(canvas, WORLD_GEO, { markers, arcs });
+  };
+
+  let alive = true; let nodeTimer = null; let targetTimer = null; let drawTimer = null;
+  const refreshSelf = async () => {
+    try { const g = await api('geoSelf', {}); if (!alive) return; state.exit = g; fillInfo(exitInfo.main, g); } catch (e) { if (alive) { state.exit = { error: e.message }; fillInfo(exitInfo.main, { error: e.message }); } }
+    try { const g = await api('geoSelf', { direct: true }); if (!alive) return; state.direct = g; fillInfo(directInfo.main, g, running ? null : h('span', { class: 'mut2', style: { fontSize: '11px' } }, '与出口相同：内核未运行')); } catch (e) { if (alive) fillInfo(directInfo.main, { error: e.message }); }
+    draw();
+  };
+  const refreshNode = async () => {
+    const sel = X.S.nodes.find((n) => n.id === X.S.selectedId);
+    if (!sel) { fillInfo(nodeInfo.main, null); state.node = null; draw(); return; }
+    fillInfo(nodeInfo.main, { ip: sel.server, country: '查询中…' });
+    try {
+      const all = await api('geoNodes', {});
+      if (!alive) return;
+      const g = all[sel.server];
+      if (g && !g.error) { state.node = g; fillInfo(nodeInfo.main, g, h('span', { class: 'mut2', style: { fontSize: '11px' } }, sel.tag)); }
+      else { state.node = null; fillInfo(nodeInfo.main, { error: (g && g.error) || '查询失败' }); }
+    } catch (e) { if (alive) fillInfo(nodeInfo.main, { error: e.message }); }
+    draw();
+  };
+  const refreshTargets = async () => {
+    if (!isRunning()) { state.targets = []; draw(); return; }
+    try {
+      const conns = await api('connections', {});
+      if (!alive) return;
+      const top = conns.filter((c) => c.host && /^[\d.]+$/.test(c.host)).sort((a, b) => (b.download || 0) - (a.download || 0)).slice(0, 8);
+      const ips = top.map((c) => c.host).filter(Boolean);
+      const geo = ips.length ? await api('geoIps', { ips }) : {};
+      if (!alive) return;
+      state.targets = ips.map((ip) => geo[ip] && !geo[ip].error ? { lon: geo[ip].longitude, lat: geo[ip].latitude } : null).filter(Boolean).slice(0, 6);
+      draw();
+    } catch { /* core may be stopping */ }
+  };
+
+  (async () => {
+    try { WORLD_GEO = WORLD_GEO || await api('worldGeo', {}); } catch (e) { if (alive) toast('世界地图数据加载失败：' + e.message, true); return; }
+    draw();
+    refreshSelf(); refreshNode(); refreshTargets();
+    nodeTimer = setInterval(() => { if (X.S.selectedId !== S.selectedId) { refreshNode(); } }, 2000);
+    targetTimer = setInterval(refreshTargets, 5000);
+    setInterval(refreshSelf, 5 * 60 * 1000).unref?.();
+  })();
+  drawTimer = setInterval(draw, 1500); // pulse animation + terminator follows real time
+
+  const legend = h('div', { class: 'toolbar', style: { marginTop: '10px' } },
+    h('span', { class: 'chip' }, h('i', { style: { background: 'var(--accent)', width: '9px', height: '9px', borderRadius: '50%' } }), '本机/出口'),
+    h('span', { class: 'chip' }, h('i', { style: { background: 'var(--down)', width: '9px', height: '9px', borderRadius: '50%' } }), '节点'),
+    h('span', { class: 'chip' }, h('i', { style: { background: 'var(--ink-3)', width: '9px', height: '9px', borderRadius: '50%' } }), '连接目标'),
+    h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, '深色区域为当前真实时间的黑夜'));
+  const el = h('div', { class: 'page' },
+    pageHead('地图', '自身、节点与目标服务器的地理位置 · 昼夜随真实时间变化',
+      h('button', { class: 'btn', onclick: (e) => act(() => (refreshSelf(), refreshNode(), refreshTargets()), undefined, e.currentTarget) }, '刷新位置')),
+    h('div', { class: 'grid cols-3', style: { marginBottom: '14px' } }, exitInfo.el, directInfo.el, nodeInfo.el),
+    h('div', { class: 'card' }, h('h2', {}, '世界地图', h('span', { class: 'hint' }, '地理位置来自 ip.sb 查询（本地缓存 30 天）；目标位置为服务器机房，仅供参考')), canvas, legend));
+
+  return { el, resize: draw, destroy: () => { alive = false; clearInterval(nodeTimer); clearInterval(targetTimer); clearInterval(drawTimer); } };
+};
+
 // ================================================================ stats
 PAGES.stats = () => {
   const S = X.S;
@@ -457,6 +599,13 @@ PAGES.stats = () => {
   const donut = h('canvas', { class: 'donut' });
   const tile = (t, main, sub) => h('div', { class: 'card tile' }, h('div', { class: 'k' }, t), main, h('div', { class: 's' }, sub));
 
+  const tdV = h('div', { class: 'v down-c' }, '↓ ' + fmtBytes(S.today.down));
+  const tuV = h('div', { class: 'v up-c' }, '↑ ' + fmtBytes(S.today.up));
+  const sdV = h('div', { class: 'v down-c' }, isRunning() ? '↓ ' + fmtBytes(S.session.downTotal) : '-');
+  const suV = h('div', { class: 'v up-c' }, isRunning() ? '↑ ' + fmtBytes(S.session.upTotal) : '-');
+  const todayTile = tile('今日', h('div', { class: 'duo' }, h('div', {}, tdV), h('div', {}, tuV)), '随内核流量实时累计');
+  const sessTile = tile('本次运行', h('div', { class: 'duo' }, h('div', {}, sdV), h('div', {}, suV)), isRunning() ? '' : '内核未运行');
+
   const list = days.slice().reverse().filter((d) => d.up || d.down);
   const table = list.length ? h('div', { class: 'scroll', style: { maxHeight: '300px' } }, h('table', { class: 'tbl' },
     h('thead', {}, h('tr', {}, ['日期', '下载', '上传', '合计'].map((t, i) => h('th', { class: i ? 'r' : '' }, t)))),
@@ -466,7 +615,7 @@ PAGES.stats = () => {
   const el = h('div', { class: 'page' },
     pageHead('流量统计', '按天累计的真实内核流量', h('button', { class: 'btn danger', onclick: () => confirm('清空全部流量历史？') && act(() => api('clearStats'), '已清空') }, '清空历史')),
     h('div', { class: 'grid cols-4', style: { marginBottom: '14px' } },
-      tile('今日', h('div', { class: 'duo' }, h('div', { class: 'v down-c' }, '↓ ' + fmtBytes(S.today.down)), h('div', { class: 'v up-c' }, '↑ ' + fmtBytes(S.today.up))), ''),
+      todayTile,
       tile('近 7 天', h('div', { class: 'duo' }, h('div', { class: 'v down-c' }, '↓ ' + fmtBytes(s7.down)), h('div', { class: 'v up-c' }, '↑ ' + fmtBytes(s7.up))), ''),
       tile('近 30 天', h('div', { class: 'duo' }, h('div', { class: 'v down-c' }, '↓ ' + fmtBytes(s30.down)), h('div', { class: 'v up-c' }, '↑ ' + fmtBytes(s30.up))), ''),
       tile('活跃天数', h('div', { class: 'v' }, String(activeDays)), '近 30 天内有流量的天数')),
@@ -479,8 +628,16 @@ PAGES.stats = () => {
           h('div', { class: 'li' }, h('i', { style: { width: '9px', height: '9px', borderRadius: '3px', background: 'var(--up)' } }), '上传', h('b', {}, fmtBytes(s30.up))))))),
     h('div', { class: 'card' }, h('h2', {}, '每日明细'), table));
 
-  setTimeout(() => { bars.update(days); drawDonut(donut, [{ value: s30.down, color: CVAR('--down') }, { value: s30.up, color: CVAR('--up') }], fmtBytes(s30.down + s30.up), '30 天合计'); }, 0);
-  return { el, resize: () => { bars.update(days); drawDonut(donut, [{ value: s30.down, color: CVAR('--down') }, { value: s30.up, color: CVAR('--up') }], fmtBytes(s30.down + s30.up), '30 天合计'); } };
+  const redrawDonut = () => drawDonut(donut, [{ value: s30.down, color: CVAR('--down') }, { value: s30.up, color: CVAR('--up') }], fmtBytes(s30.down + s30.up), '30 天合计');
+  setTimeout(() => { bars.update(days); redrawDonut(); }, 0);
+  return {
+    el,
+    tick(t) { // keep the today/session tiles truly live while the page is open
+      if (t.today) { tdV.textContent = '↓ ' + fmtBytes(t.today.down || 0); tuV.textContent = '↑ ' + fmtBytes(t.today.up || 0); }
+      sdV.textContent = '↓ ' + fmtBytes(t.downTotal || 0); suV.textContent = '↑ ' + fmtBytes(t.upTotal || 0);
+    },
+    resize: () => { bars.update(days); redrawDonut(); },
+  };
 };
 
 // ================================================================ logs
@@ -563,7 +720,31 @@ PAGES.settings = () => {
         h('div', { class: 'span2 note' }, `内核：${S.core.version || '未找到'}`, h('br'), `路径：${S.core.binary}`)),
       sect('界面',
         fld('主题', sel('theme', [['light', '浅色'], ['dark', '深色']]), 0, '选择后立即生效'),
-        h('div', {}, check('closeToTray', '关闭窗口时最小化到系统托盘'))),
+        h('div', {}, check('closeToTray', '关闭窗口时最小化到系统托盘')),
+        fld('背景壁纸', h('div', { class: 'toolbar' },
+          h('button', { class: 'btn small', onclick: (e) => act(() => api('pickWallpaper'), undefined, e.currentTarget) }, s.wallpaper ? '更换图片' : '选择图片'),
+          s.wallpaper ? h('button', { class: 'btn small danger', onclick: (e) => act(() => api('clearWallpaper'), '已恢复纯色背景', e.currentTarget) }, '清除壁纸') : null,
+          s.wallpaper ? h('span', { class: 'tag ok' }, '已启用') : h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, '未设置')), 1, '图片会拷贝到程序数据目录，浅色/深色主题下自动叠加对应遮罩'),
+        (() => {
+          const debounce = { t: null };
+          const live = (key, val) => { // instant preview, persisted shortly after
+            document.documentElement.style.setProperty(key === 'wallpaperOpacity' ? '--wp-o' : key === 'wallpaperVeil' ? '--wp-veil' : '--wp-blur',
+              key === 'wallpaperBlur' ? val + 'px' : val);
+            clearTimeout(debounce.t);
+            debounce.t = setTimeout(() => api('setSettings', { [key]: Number(val) }).catch(() => {}), 350);
+          };
+          const slider = (key, label, min, max, step, fmt) => {
+            const val = h('span', { class: 'mut2', style: { fontSize: '11.5px', minWidth: '38px', textAlign: 'right' } }, fmt(s[key]));
+            const r = h('input', { type: 'range', min, max, step, value: s[key], 'aria-label': label, oninput: (e) => { val.textContent = fmt(Number(e.target.value)); live(key, e.target.value); } });
+            return h('div', { class: 'field' }, h('label', {}, label), h('div', { class: 'toolbar' }, r, val));
+          };
+          const pct = (v) => Math.round(v * 100) + '%';
+          const px = (v) => v + 'px';
+          return h('div', { class: 'span2', style: { display: 'grid', gap: '10px' } },
+            slider('wallpaperOpacity', '壁纸浓度（图片显示强度）', 10, 100, 5, (v) => pct(v / 100)),
+            slider('wallpaperVeil', '亮度遮罩（越大越接近纯色主题）', 0, 95, 5, (v) => pct(v / 100)),
+            slider('wallpaperBlur', '壁纸模糊', 0, 40, 2, px));
+        })()),
       sect('系统',
         h('div', {}, check('setSystemProxy', '启动内核时自动设置 Windows 系统代理', !S.sysproxySupported), !S.sysproxySupported ? h('div', { class: 'note' }, '当前系统不是 Windows，此项不可用') : null),
         h('div', {}, check('autoStartCore', '打开客户端时自动启动内核')))));

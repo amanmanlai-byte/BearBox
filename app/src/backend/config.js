@@ -26,6 +26,10 @@ const DEFAULT_SETTINGS = {
   theme: 'light',              // light | dark
   closeToTray: true,           // hide to tray instead of quitting on window close
   autoUpdateSubsMin: 0,        // subscription auto-update interval in minutes, 0 = off
+  wallpaper: '',               // absolute path of the background image ('' = off)
+  wallpaperOpacity: 0.35,      // how strong the wallpaper shows (0.1-1)
+  wallpaperVeil: 0.55,         // theme-colored veil over the wallpaper; higher = calmer/brighter match
+  wallpaperBlur: 0,            // px blur applied to the wallpaper
 };
 
 function parseDnsAddress(addr, tag, extra = {}) {

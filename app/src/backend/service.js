@@ -7,9 +7,10 @@ const { buildConfig, DEFAULT_SETTINGS } = require('./config');
 const { parseSubscriptionBody, dedupeTags, fetchSubscription } = require('./subscription');
 const { parseLinks } = require('./links');
 const { SystemProxy } = require('./sysproxy');
+const { GeoService, resolveHost } = require('./geo');
 
 // Settings that only affect the UI or app shell; changing them must not restart a running core.
-const NO_RESTART_KEYS = ['setSystemProxy', 'autoStartCore', 'connectionTestURL', 'testConcurrency', 'theme', 'closeToTray', 'autoUpdateSubsMin'];
+const NO_RESTART_KEYS = ['setSystemProxy', 'autoStartCore', 'connectionTestURL', 'testConcurrency', 'theme', 'closeToTray', 'autoUpdateSubsMin', 'wallpaper', 'wallpaperOpacity', 'wallpaperVeil', 'wallpaperBlur'];
 const LEGACY_TEST_URL = 'https://cp.cloudflare.com/generate_204'; // default before v0.2.2
 
 class AppService extends EventEmitter {
@@ -18,6 +19,7 @@ class AppService extends EventEmitter {
     this.store = new Store(path.join(userData, 'data.json'));
     this.core = core || new Core({ binary: binary || resolveCoreBinary(appRoot, resourcesPath), workDir: path.join(userData, 'core-run') });
     this.rulesetDir = resolveRulesetDir(appRoot, resourcesPath);
+    this.geo = new GeoService({ userData, getProxy: () => (this.core.state === 'running' ? { host: '127.0.0.1', port: Number(this.d.settings.mixedPort) } : null) });
     this.sysproxy = sysproxy || new SystemProxy();
     this.fetchSub = fetchSub;
     this.proxyApplied = false; this.starting = false; this.lastError = null; this.coreVersion = null;
