@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, shell, Menu, Tray, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, Menu, Tray, nativeImage, dialog } = require('electron');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -10,7 +10,7 @@ if (process.env.JIAJIA_NOSANDBOX) app.commandLine.appendSwitch('no-sandbox');
 if (process.env.JIAJIA_USERDATA) app.setPath('userData', process.env.JIAJIA_USERDATA);
 if (!app.requestSingleInstanceLock()) { app.quit(); }
 
-let win; let svc; let tray; let quitting = false;
+let win; let svc; let tray; let quitting = false; let balloonShown = false;
 
 function psQuote(s) { return String(s).replace(/'/g, "''"); }
 function requestElevation() {
@@ -59,9 +59,11 @@ function buildTray() {
   refresh();
 }
 function showWin() {
-  if (!win) return;
-  if (win.isMinimized()) win.restore();
-  win.show(); win.focus();
+  if (!win || win.isDestroyed()) return;
+  try {
+    if (win.isMinimized()) win.restore();
+    win.show(); win.focus();
+  } catch { /* window in a transient state */ }
 }
 
 function createWindow() {
@@ -76,7 +78,13 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.on('close', (e) => {
     // close-to-tray: hide instead of quitting unless we are really quitting
-    if (!quitting && svc && svc.d.settings.closeToTray && tray) { e.preventDefault(); win.hide(); }
+    if (!quitting && svc && svc.d.settings.closeToTray && tray) {
+      e.preventDefault(); win.hide();
+      if (!balloonShown) {
+        balloonShown = true;
+        try { tray.displayBalloon({ title: 'JiajiaBox 仍在运行', content: '窗口已最小化到系统托盘（屏幕右下角，可能藏在向上的小箭头里）。右键托盘图标可选择退出。' }); } catch { /* older shell */ }
+      }
+    }
   });
 }
 
@@ -110,6 +118,14 @@ const handlers = {
 };
 
 app.whenReady().then(async () => {
+  // Running straight out of an archive preview (WinRAR/7-Zip temp extraction): warn once.
+  if (/Rar\$EX|\.rartemp|\\Temp\\7z|\/Temp\/7z/i.test(process.execPath)) {
+    dialog.showMessageBox({
+      type: 'warning', title: '请先解压再运行', message: '正在从压缩包临时目录里直接运行',
+      detail: 'JiajiaBox.exe 需要旁边的 resources 等文件才能正常工作。请先把整个压缩包解压到一个文件夹（右键压缩包 - 全部解压），再运行解压出来的 JiajiaBox.exe。',
+      buttons: ['知道了'], noLink: true,
+    }).catch(() => {});
+  }
   svc = new AppService({ userData: app.getPath('userData'), appRoot: app.getAppPath(), resourcesPath: process.resourcesPath });
   await svc.init();
   let pending = null;
