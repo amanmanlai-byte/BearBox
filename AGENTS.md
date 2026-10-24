@@ -7,43 +7,49 @@ The kernel MUST be the one compiled from the user's own source: native-src/sing-
 Never overwrite the original sources. Work only under windows/ on branch windows-port.
 
 ## Layout
-- windows/app/            Electron app (JavaScript, no bundler). Run: npm install, npm start. Test: npm test (26 tests, needs core/sing-box-linux-amd64 on Linux or sing-box-windows-amd64.exe on Windows)
-- windows/app/src/backend Node backend with no Electron imports: links.js (share links), subscription.js (base64/clash yaml/sing-box json), config.js (sing-box 1.14 config builder), core.js (process + Clash API polling), sysproxy.js (Windows registry + WinINet refresh), store.js, service.js (all app logic)
-- windows/app/src/main.js, preload.js   thin IPC wiring (single channel 'jj', handlers map in main.js)
-- windows/app/src/renderer              8 pages in pages.js, hand drawn canvas charts in charts.js, CSP is default-src 'self' (no inline styles; use element.style assignment)
+- windows/app/            Electron app (JavaScript, no bundler). Run: npm install, npm start. Test: npm test (36 tests, needs core/sing-box-windows-amd64.exe on Windows)
+- windows/app/src/backend Node backend with no Electron imports: links.js (share links), subscription.js (base64/clash yaml/sing-box json), config.js (sing-box 1.14 config builder + describeRule for the rules UI), core.js (process + Clash API polling, mapConnection), sysproxy.js (Windows registry + WinINet refresh), store.js, service.js (all app logic + subscription auto-update)
+- windows/app/src/main.js, preload.js   thin IPC wiring (single channel 'jj', handlers map in main.js); tray icon, close-to-tray, UAC elevation for TUN
+- windows/app/src/renderer  8 pages in pages.js, hand drawn canvas charts in charts.js (SpeedChart/DailyBars with hover tooltips, drawDonut, drawSpark), design system in app.css (light + dark via [data-theme]), CSP is default-src 'self' (no inline styles; use element.style assignment)
+- windows/app/tools/make-icons.js  zero-dep icon generator (writes assets/icon.ico + icon.png + tray.png)
 - windows/kernel-build/   scripts and notes used to compile the kernel (needs Go, see README there)
 - Kernel binaries are not in git: put sing-box-windows-amd64.exe in windows/app/core/
 
-## Reference material inside the original project (read these before implementing missing features)
-- smali*/io/nekohasekai/sagernet/fmt/*   per-protocol beans and ConfigBuilderKt (Android config builder, legacy format)
-- addon-src/io/nekohasekai/sagernet/ui/NativeCoreConfig.java   legacy config to 1.14 migration, best field reference
-- addon-src/.../DnsIpRouting, RoutingFallback, AiRoutingDomains, TelegramRouting, SubscriptionDownload, SubscriptionInfo, ConnectionInspector, AppTrafficRanking, LifetimeTraffic   Jiajia specific logic in readable Java
-- res/xml/global_preferences.xml, route_preferences.xml, group_preferences.xml and res/values-zh-rCN/strings.xml   full settings inventory with defaults
-- native-src/libcore (Go bridge, config_compat.go), native-src/sing-box/experimental/clashapi (API used for live data)
+## Done and verified on a real Windows 10/11 machine (v0.2.0, Oct 2026)
+36 automated tests pass: share link parsing (vmess, vless incl. reality, trojan, ss incl. obfs, hysteria2, tuic, socks, http), subscription formats,
+config generation accepted by `sing-box check` (all protocols, rule/global mode, custom rules incl. per-process rules, TUN inbound), real traffic
+through a selected node, node switching, speed/connection/memory/daily traffic stats, per node HTTPS delay test on Windows (see gotchas), rule edit
+restarts core, port conflict error, Windows system proxy set/restore + crash recovery, subscription auto-update timer, UI-only settings never restart the core.
+UI verified with DOM probes (0 JS errors on all 8 pages) and screenshots in both themes, plus a live run with real traffic (speed curve 6.39MB/s peak,
+connections table with real flows, per-process ranking identifying curl.exe). Packaged exe smoke tested (boots, renders 8 pages, exits cleanly).
 
-## Done and verified (Linux sandbox, real kernel built from the user's source)
-Share link parsing (vmess, vless incl. reality, trojan, ss incl. obfs plugin, hysteria2, tuic, socks, http), subscription formats, config generation accepted by `sing-box check`
-(all protocols, rule/global mode, custom rules, TUN inbound), real traffic through a selected node, node switching, speed/connection/memory/daily traffic stats,
-per node HTTPS delay test, rule edit restarts core, port conflict error, UI render of all 8 pages (screenshots under Electron + xvfb).
-Windows system proxy on a real Windows host: enable, disable, exact restoration of pre-existing `ProxyEnable`/`ProxyServer`/`ProxyOverride`, and `service.init` crash recovery.
+## NOT verified on real Windows yet
+1. TUN mode end to end: preflight (wintun.dll present, admin check) and UAC elevation flow are implemented and unit tested; actually creating the
+   adapter needs a run as administrator on the target machine.
+2. Installer (only a portable folder exists), code signing, start with Windows.
 
-## NOT verified on real Windows (top priority for you, you can run Windows)
-1. TUN mode: config passes `check`, but running needs admin rights and wintun.dll next to the exe. golang.zx2c4.com/wintun was replaced by github.com/MetaCubeX/wintun-go (see kernel-build/WINTUN_COMMIT.txt). Verify it really creates the adapter; add an admin elevation flow and a clear error when not elevated.
-2. Core process stop on Windows (Core.stop uses p.kill()), no orphan sing-box.exe after the app exits or crashes.
-3. Rule mode downloads remote rule sets (SagerNet sing-geosite/sing-geoip) through the 'proxy' outbound at startup. If the node is dead or GitHub is blocked, startup may fail. Needs a better strategy (cache, fallback, local files; the original project ships geoip/geosite assets, check how Jiajia's custom core consumes them).
-5. Packaging: only a portable folder exists (electron-packager). Add a real installer, icon, app signing notes, tray icon, close-to-tray, start with Windows, single instance behavior check.
+## Not implemented compared with the Android app (check the smali/addon-src for exact behavior; NOT included in this handoff zip)
+SSH, WireGuard, AnyTLS, ShadowTLS, Naive, Hysteria v1, Mieru, chain proxy, custom JSON config nodes, GeoIP/GeoSite asset management, STUN tool,
+DNS settings beyond remote/direct (fakeip, DNS rules), globe/geo view. Per-app proxy is covered on Windows by process_name rules (rule editor field).
+Node edit/create forms and node sorting beyond the three orders are not implemented (sorting: default/latency/name).
 
-## Not implemented compared with the Android app (do these after the above, check the smali/addon-src for exact behavior)
-SSH, WireGuard, AnyTLS, ShadowTLS, Naive, Hysteria v1, Mieru, chain proxy, custom JSON config nodes, per-app proxy (Windows equivalent: process_name rules), GeoIP/GeoSite asset management,
-subscription auto update and subscription group settings (group_preferences.xml), STUN tool, DNS settings beyond remote/direct (fakeip, DNS rules), route rule fields from route_preferences.xml,
-node edit/create forms, node sorting, traffic ranking per app/process (see AppTrafficRanking.java), lifetime traffic, globe/geo view (Jiajia clashapi has globe.go).
-
-## Gotchas learned
-- The Jiajia Clash API ignores http:// test URLs in /proxies/{tag}/delay (clashapi/proxies.go). Test URL must be https://, enforced in service.setSettings.
+## Gotchas learned (all verified on real Windows)
+- The Jiajia Clash API ignores http:// test URLs in /proxies/{tag}/delay; enforced in service.setSettings.
+- The kernel's URLTest client does NOT read SSL_CERT_FILE on Windows (uses the OS cert store). The e2e test installs the
+  self-signed fixture CA into CurrentUser\Root via certutil for the run and removes it after. Plan around this if you change delay tests.
+- e2e curl children need a stripped proxy env: the dev shell exports NO_PROXY=127.0.0.1 which silently bypasses the explicit -x proxy,
+  and native curl cannot write /dev/null (use a temp file).
+- MSYS/Git Bash converts /CN=... to a path for openssl (use MSYS_NO_PATHCONV=1); a bash pipe like `| tail` hides output until exit.
+- node_modules/electron/path.txt is lost when node_modules is copied: write "electron.exe" into it (no trailing newline).
 - Fresh core counters start at 0; Core.start sets the poll baseline to zero (otherwise early traffic is lost).
 - Subscription node names are untrusted: render with textContent only (util.js h()).
-- Building the kernel in a restricted network: golang.org and proxy.golang.org may be unreachable. kernel-build/mkmod.py writes an overlay go.mod (via -modfile) with GitHub mirror replaces. On a normal network you can build directly: see native-src/build.sh for tags (with_conntrack,with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api), GOOS=windows GOARCH=amd64 CGO_ENABLED=0.
+- Building the kernel in a restricted network: kernel-build/mkmod.py writes an overlay go.mod (via -modfile) with GitHub mirror replaces.
 - Do not report anything as working unless it was run. Keep the verified/unverified lists above up to date.
 
 ## Conventions
-Simplified Chinese UI text. No em dashes in user facing text. Keep backend free of Electron imports so it stays testable. Add a test for every backend change.
+Simplified Chinese UI text. No em dashes in user facing text. Keep backend free of Electron imports so it stays testable.
+Add a test for every backend change. Renderer is verified by screenshots + DOM probes (JIAJIA_SHOT_DIR / JIAJIA_SHOT_PAGES env hooks in main.js).
+
+## Rebuild / package
+cd windows/app && npm install && npm test && npm run pack:win   (icon: npm run icons; output: windows/dist/JiajiaBox-win32-x64)
+Release zip convention: JiajiaBox-win32-x64-<version>.zip with 使用说明.txt inside the folder.

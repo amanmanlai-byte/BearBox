@@ -1,14 +1,15 @@
 {
   "name": "jiajiabox-desktop",
   "productName": "JiajiaBox",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "JiajiaBox desktop client for Windows (sing-box 1.14.3-Jiajia-7 core)",
   "main": "src/main.js",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
     "test": "node --test --test-timeout=60000 test/*.test.js",
-    "pack:win": "electron-packager . JiajiaBox --platform=win32 --arch=x64 --out=../dist --overwrite --prune=true --ignore=\"^/test\" --ignore=\"^/core/sing-box-linux\" --ignore=\"^/package-lock.json\" --ignore=\"^/node_modules/(?!(js-yaml|argparse)(/|$))\""
+    "icons": "node tools/make-icons.js",
+    "pack:win": "electron-packager . JiajiaBox --platform=win32 --arch=x64 --out=../dist --overwrite --prune=true --icon=assets/icon.ico --ignore=\"^/test\" --ignore=\"^/tools\" --ignore=\"^/core/sing-box-linux\" --ignore=\"^/package-lock.json\" --ignore=\"^/node_modules/(?!(js-yaml|argparse)(/|$))\""
   },
   "dependencies": {
     "js-yaml": "^4.1.0"
