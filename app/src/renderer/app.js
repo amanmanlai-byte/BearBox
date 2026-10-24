@@ -88,6 +88,18 @@ window.jj.on('log', (l) => { X.logs.push(l); if (X.logs.length > 2000) X.logs.sh
 window.addEventListener('resize', () => view && view.resize && view.resize());
 
 (async () => {
+  // Opened outside Electron (e.g. double-clicking index.html in a browser): the
+  // preload bridge is missing, so there is no backend and nothing real to show.
+  if (!window.jj) {
+    const main = document.getElementById('main');
+    if (main) main.replaceChildren(h('div', { class: 'page' },
+      h('div', { class: 'card', style: { margin: '60px auto', maxWidth: '520px', textAlign: 'center', padding: '36px 28px' } },
+        h('b', { style: { fontSize: '16px' } }, '这不是网页，请用桌面程序打开'),
+        h('div', { class: 'note', style: { marginTop: '10px', lineHeight: '1.7' } },
+          'JiajiaBox 的界面必须由 JiajiaBox.exe 加载，浏览器里没有它的数据通道，所以这里没有内容。',
+          h('br'), '请到程序文件夹中双击 JiajiaBox.exe 启动。'))));
+    return;
+  }
   try { X.logs = await api('logs'); applyState(await api('state')); } catch (e) {
     const main = document.getElementById('main'); if (main) main.textContent = '加载失败：' + e.message;
   }
