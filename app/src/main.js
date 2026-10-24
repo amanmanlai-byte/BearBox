@@ -1,14 +1,32 @@
 'use strict';
 const { app, BrowserWindow, ipcMain, shell, Menu } = require('electron');
+const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { AppService } = require('./backend/service');
+const { isWindowsAdmin } = require('./backend/core');
 
 if (process.env.JIAJIA_NOSANDBOX) app.commandLine.appendSwitch('no-sandbox');
 if (process.env.JIAJIA_USERDATA) app.setPath('userData', process.env.JIAJIA_USERDATA);
 if (!app.requestSingleInstanceLock()) { app.quit(); }
 
 let win; let svc; let quitting = false;
+
+function psQuote(s) { return String(s).replace(/'/g, "''"); }
+function requestElevation() {
+  const args = [...process.argv.slice(1).filter((a) => a !== '--jj-elevated'), '--jj-elevated'];
+  const argList = args.map((a) => `'${psQuote(a)}'`).join(',');
+  const script = `$ErrorActionPreference='Stop'; Start-Process -FilePath '${psQuote(process.execPath)}' -ArgumentList @(${argList}) -Verb RunAs`;
+  return new Promise((resolve, reject) => execFile('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true }, (e) => (e ? reject(e) : resolve())));
+}
+async function startCore() {
+  if (process.platform === 'win32' && svc.d.settings.tun && !(await isWindowsAdmin())) {
+    try { await requestElevation(); } catch { throw new Error('未获得管理员权限，无法启动 TUN 模式。请接受 UAC 提示后重试。'); }
+    quitting = true; app.quit();
+    return { elevationRequested: true };
+  }
+  await svc.start(); return { elevationRequested: false };
+}
 
 function send(ch, data) { if (win && !win.isDestroyed()) win.webContents.send(ch, data); }
 
@@ -33,7 +51,7 @@ const handlers = {
   selectNode: (a) => svc.selectNode(a.id),
   testNodes: (a) => svc.testNodes(a && a.ids),
   removeNode: (a) => svc.removeNode(a.id),
-  start: () => svc.start(),
+  start: () => startCore(),
   stop: () => svc.stop(),
   restart: () => svc.restart(),
   toggleSysProxy: (a) => svc.toggleSystemProxy(a.on),

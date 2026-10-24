@@ -263,7 +263,7 @@ PAGES.settings = () => {
     sect('代理', fld('本地代理端口（混合 HTTP/SOCKS）', text('mixedPort', 'number')), fld('路由模式', sel('mode', [['rule', '规则（大陆直连）'], ['global', '全局代理']])),
       h('div', {}, check('allowAccess', '允许来自局域网的连接')), h('div', {}, check('bypassLan', '绕过局域网地址')), h('div', {}, check('trafficSniffing', '启用流量探测（sniff）')),
       h('div', { class: 'span2' }, check('tun', 'TUN 模式（虚拟网卡，需要管理员权限与 wintun.dll）'),
-        h('div', { class: 'warnbox', style: { marginTop: '8px' } }, 'TUN 模式的配置已通过内核校验，但在 Windows 上的实际运行（管理员权限、wintun 驱动）尚未在真实机器上验证。开启后不会自动设置系统代理。'))),
+        h('div', { class: 'warnbox', style: { marginTop: '8px' } }, '开启时会请求管理员权限。wintun.dll 必须位于内核文件同一目录；缺失或拒绝 UAC 时会显示明确错误。TUN 模式不会自动设置系统代理。'))),
     sect('DNS', fld('远程 DNS', text('remoteDns'), 0, '经代理查询，例如 https://dns.google/dns-query'), fld('直连 DNS', text('directDns'), 0, '例如 https://223.5.5.5/dns-query 或 local'),
       fld('IPv6 策略', sel('ipv6Mode', [['prefer_ipv4', '优先 IPv4'], ['prefer_ipv6', '优先 IPv6'], ['ipv4_only', '仅 IPv4'], ['ipv6_only', '仅 IPv6']]))),
     sect('内核', fld('Clash API 端口', text('apiPort', 'number'), 0, '仅监听 127.0.0.1，客户端用它读取实时数据'), fld('日志级别', sel('logLevel', [['trace', 'trace'], ['debug', 'debug'], ['info', 'info'], ['warn', 'warn'], ['error', 'error']])),

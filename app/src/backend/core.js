@@ -5,6 +5,23 @@ const fs = require('fs');
 const path = require('path');
 const net = require('net');
 
+function isWindowsAdmin() {
+  if (process.platform !== 'win32') return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const p = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', "([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)"], { windowsHide: true });
+    let out = ''; p.stdout.on('data', (d) => { out += d; });
+    p.on('error', () => resolve(false)); p.on('close', () => resolve(/^\s*true\s*$/i.test(out)));
+  });
+}
+
+async function validateTunPrerequisites({ enabled, binary, platform = process.platform, fsApi = fs, isElevated = isWindowsAdmin }) {
+  if (!enabled || platform !== 'win32') return { ok: true };
+  const dll = path.join(path.dirname(binary), 'wintun.dll');
+  if (!fsApi.existsSync(dll)) return { ok: false, error: `TUN 模式缺少 wintun.dll：请将 wintun.dll 放在内核文件同一目录（${dll}）` };
+  if (!(await isElevated())) return { ok: false, error: 'TUN 模式需要管理员权限。请在 UAC 提示中允许 JiajiaBox 以管理员身份重新启动。' };
+  return { ok: true, dll };
+}
+
 function resolveCoreBinary(appRoot, resourcesPath) {
   if (process.env.JIAJIA_CORE) return process.env.JIAJIA_CORE;
   const name = process.platform === 'win32' ? 'sing-box-windows-amd64.exe' : `sing-box-${process.platform}-${process.arch === 'x64' ? 'amd64' : process.arch}`;
@@ -28,9 +45,9 @@ function portFree(port, host = '127.0.0.1') {
 }
 
 class Core extends EventEmitter {
-  constructor({ binary, workDir }) {
+  constructor({ binary, workDir, platform = process.platform, fsApi = fs, isElevated = isWindowsAdmin }) {
     super();
-    this.binary = binary; this.workDir = workDir;
+    this.binary = binary; this.workDir = workDir; this.platform = platform; this.fs = fsApi; this.isElevated = isElevated;
     this.proc = null; this.state = 'stopped'; // stopped | starting | running | stopping
     this.api = null; this.secret = ''; this.timer = null;
     this.last = null; this.samples = []; this.apiOk = false;
@@ -64,10 +81,13 @@ class Core extends EventEmitter {
 
   async start({ config, apiPort, secret }) {
     if (this.state !== 'stopped') throw new Error(`core is ${this.state}`);
-    fs.mkdirSync(this.workDir, { recursive: true });
+    const tun = config.inbounds.some((i) => i.type === 'tun');
+    const tunCheck = await validateTunPrerequisites({ enabled: tun, binary: this.binary, platform: this.platform, fsApi: this.fs, isElevated: this.isElevated });
+    if (!tunCheck.ok) throw new Error(tunCheck.error);
+    this.fs.mkdirSync(this.workDir, { recursive: true });
     const cfgPath = path.join(this.workDir, 'config.json');
-    fs.writeFileSync(cfgPath, JSON.stringify(config, null, 2));
-    if (!fs.existsSync(this.binary)) throw new Error(`Core binary not found: ${this.binary}`);
+    this.fs.writeFileSync(cfgPath, JSON.stringify(config, null, 2));
+    if (!this.fs.existsSync(this.binary)) throw new Error(`Core binary not found: ${this.binary}`);
     const mixed = config.inbounds.find((i) => i.type === 'mixed');
     if (mixed && !(await portFree(mixed.listen_port, mixed.listen === '0.0.0.0' ? '0.0.0.0' : '127.0.0.1'))) throw new Error(`Port ${mixed.listen_port} is already in use`);
     const chk = await this.check(cfgPath);
@@ -164,4 +184,4 @@ function tcpPing(host, port, timeout = 3000) {
   });
 }
 
-module.exports = { Core, resolveCoreBinary, tcpPing, portFree };
+module.exports = { Core, resolveCoreBinary, tcpPing, portFree, isWindowsAdmin, validateTunPrerequisites };

@@ -21,7 +21,11 @@ function startServer(port, apiPort, password) {
   const p = spawn(BIN, ['run', '-c', f, '-D', tmp], { stdio: 'ignore' }); procs.push(p); return p;
 }
 async function serverTotals(apiPort) { const r = await fetch(`http://127.0.0.1:${apiPort}/connections`); const j = await r.json(); return { up: j.uploadTotal, down: j.downloadTotal }; }
-const curlViaProxy = (port, url) => new Promise((resolve, reject) => execFile('curl', ['-s', '-m', '20', '-x', `http://127.0.0.1:${port}`, '-o', '/dev/null', '-w', '%{http_code} %{size_download}', url], (e, out) => (e ? reject(e) : resolve(out.trim().split(' ').map(Number)))));
+// Native Windows curl cannot write to /dev/null (no MSYS path translation when spawned from Node), so discard the body into a temp file.
+// The developer shell may export HTTP_PROXY/NO_PROXY (e.g. NO_PROXY=127.0.0.1 makes curl bypass our explicit -x proxy), so strip them for child curls.
+const CURL_NULL = path.join(os.tmpdir(), 'jj-e2e-curl.out');
+const CURL_ENV = (() => { const e = { ...process.env }; for (const k of ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'no_proxy', 'http_proxy', 'https_proxy', 'all_proxy']) delete e[k]; return e; })();
+const curlViaProxy = (port, url) => new Promise((resolve, reject) => execFile('curl', ['-s', '-m', '20', '-x', `http://127.0.0.1:${port}`, '-o', CURL_NULL, '-w', '%{http_code} %{size_download}', url], { env: CURL_ENV }, (e, out) => (e ? reject(e) : resolve(out.trim().split(' ').map(Number)))));
 
 const sysproxyCalls = [];
 const fakeSys = { supported: true, async enable(h, p) { sysproxyCalls.push(['enable', h, p]); return { ok: true, backup: { ProxyEnable: { type: 'REG_DWORD', data: '0x0' } } }; }, async disable(b) { sysproxyCalls.push(['disable', !!b]); return { ok: true }; } };
@@ -33,9 +37,13 @@ test.before(async () => {
   const sub = 'ss://' + b64('aes-128-gcm:pw1') + '@127.0.0.1:18388#node-A\nss://' + b64('aes-128-gcm:pw2') + '@127.0.0.1:18389#node-B\n';
   subServer = http.createServer((req, res) => { res.writeHead(200, { 'subscription-userinfo': 'upload=100; download=200; total=1000000; expire=1893456000' }); res.end(b64(sub)); });
   await new Promise((r) => subServer.listen(18081, '127.0.0.1', r));
-  execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', path.join(tmp, 'k.pem'), '-out', path.join(tmp, 'c.pem'), '-subj', '/CN=localhost', '-days', '2', '-addext', 'subjectAltName=IP:127.0.0.1'], { stdio: 'ignore' });
-  process.env.SSL_CERT_FILE = path.join(tmp, 'c.pem'); // Go (the core) trusts this self-signed cert, so the delay test can hit a local https URL
-  tlsServer = https.createServer({ key: fs.readFileSync(path.join(tmp, 'k.pem')), cert: fs.readFileSync(path.join(tmp, 'c.pem')) }, (req, res) => { res.writeHead(204); res.end(); });
+  // Checked-in test fixture makes this Windows test independent from an OpenSSL installation.
+  const certPem = path.join(__dirname, 'fixtures', 'localhost.pem'); const certPfx = path.join(__dirname, 'fixtures', 'localhost.pfx'); const pass = 'jiajiabox-e2e';
+  // The kernel's URLTest (delay) client ignores SSL_CERT_FILE on Windows and uses the OS cert store,
+  // so the self-signed test CA must be trusted via the CurrentUser Root store (no admin rights needed).
+  if (process.platform === 'win32') execFileSync('certutil', ['-user', '-addstore', 'Root', certPem], { stdio: 'ignore' });
+  process.env.SSL_CERT_FILE = certPem; // still useful for non-Windows and Go stdlib paths
+  tlsServer = https.createServer({ pfx: fs.readFileSync(certPfx), passphrase: pass }, (req, res) => { res.writeHead(204); res.end(); });
   await new Promise((r) => tlsServer.listen(18443, '127.0.0.1', r));
   startServer(18388, 19191, 'pw1'); startServer(18389, 19192, 'pw2');
   await sleep(1500);
@@ -43,7 +51,10 @@ test.before(async () => {
   await svc.init();
 });
 test.after(async () => {
-  await svc.shutdown().catch(() => {}); procs.forEach((p) => p.kill()); origin.close(); subServer.close(); tlsServer.close();
+  if (svc) await svc.shutdown().catch(() => {});
+  procs.forEach((p) => p.kill());
+  for (const server of [origin, subServer, tlsServer].filter(Boolean)) await new Promise((r) => server.close(r));
+  if (process.platform === 'win32') { try { execFileSync('certutil', ['-user', '-delstore', 'Root', 'localhost'], { stdio: 'ignore' }); } catch { /* already gone */ } }
 });
 
 test('core binary reports the Jiajia build', () => { assert.match(svc.coreVersion || '', /Jiajia/); });
@@ -64,18 +75,18 @@ test('settings are validated and persisted', async () => {
   await assert.rejects(svc.setSettings({ mixedPort: 70000 }), /端口/);
   await assert.rejects(svc.setSettings({ mixedPort: 19099, apiPort: 19099 }), /不能相同/);
   await assert.rejects(svc.setSettings({ connectionTestURL: 'http://cp.cloudflare.com/' }), /https/);
-  await svc.setSettings({ mixedPort: 12080, apiPort: 19099, mode: 'global', bypassLan: false, connectionTestURL: 'https://127.0.0.1:18443/ping' });
+  await svc.setSettings({ mixedPort: 31280, apiPort: 19099, mode: 'global', bypassLan: false, connectionTestURL: 'https://127.0.0.1:18443/ping' });
   svc.store.flush(); const saved = JSON.parse(fs.readFileSync(path.join(tmp, 'ud', 'data.json'), 'utf8'));
-  assert.equal(saved.settings.mixedPort, 12080); assert.equal(saved.settings.mode, 'global');
+  assert.equal(saved.settings.mixedPort, 31280); assert.equal(saved.settings.mode, 'global');
 });
 
 test('start: traffic really flows through the selected node and is measured', async () => {
   const ticks = []; svc.on('tick', (t) => ticks.push(t));
   await svc.start();
   assert.equal(svc.core.state, 'running');
-  assert.deepEqual(sysproxyCalls[0], ['enable', '127.0.0.1', 12080]);
+  assert.deepEqual(sysproxyCalls[0], ['enable', '127.0.0.1', 31280]);
   const a0 = await serverTotals(19191); const b0 = await serverTotals(19192);
-  const [code, size] = await curlViaProxy(12080, 'http://127.0.0.1:18080/big');
+  const [code, size] = await curlViaProxy(31280, 'http://127.0.0.1:18080/big');
   assert.equal(code, 200); assert.equal(size, PAYLOAD.length);
   await sleep(2500);
   const a1 = await serverTotals(19191); const b1 = await serverTotals(19192);
@@ -92,7 +103,7 @@ test('switching node reroutes traffic to server B only', async () => {
   await svc.selectNode(nb.id);
   assert.equal(await svc.core.currentNode(), 'node-B');
   const a0 = await serverTotals(19191); const b0 = await serverTotals(19192);
-  const [code] = await curlViaProxy(12080, 'http://127.0.0.1:18080/big'); assert.equal(code, 200);
+  const [code] = await curlViaProxy(31280, 'http://127.0.0.1:18080/big'); assert.equal(code, 200);
   await sleep(1500);
   const a1 = await serverTotals(19191); const b1 = await serverTotals(19192);
   assert.ok(b1.up + b1.down > b0.up + b0.down, 'server B saw traffic');
@@ -106,7 +117,7 @@ test('URL delay test through the running core returns real numbers', async () =>
 
 test('connections list is real and can be closed', async () => {
   // hold a connection open through the proxy
-  const holder = spawn('curl', ['-s', '-m', '8', '-x', 'http://127.0.0.1:12080', '-o', '/dev/null', 'http://127.0.0.1:18080/slow']);
+  const holder = spawn('curl', ['-s', '-m', '8', '-x', 'http://127.0.0.1:31280', '-o', CURL_NULL, 'http://127.0.0.1:18080/slow'], { env: CURL_ENV });
   await sleep(2500);
   assert.ok(svc.core.connections.length >= 1, 'has live connection'); const c = svc.core.connections[0]; assert.equal(c.host, '127.0.0.1');
   await svc.core.closeAll(); await sleep(1500);
@@ -117,12 +128,12 @@ test('adding a rule restarts the core with a valid config; logs are captured', a
   await svc.saveRule({ name: 'direct-local', domain: 'example.com', outbound: 'direct' });
   assert.equal(svc.core.state, 'running');
   assert.ok(svc.core.logs.length > 0);
-  const [code] = await curlViaProxy(12080, 'http://127.0.0.1:18080/big'); assert.equal(code, 200);
+  const [code] = await curlViaProxy(31280, 'http://127.0.0.1:18080/big'); assert.equal(code, 200);
 });
 
 test('invalid port conflict is reported instead of hanging', async () => {
   await svc.stop();
-  const blocker = http.createServer(); await new Promise((r) => blocker.listen(12080, '127.0.0.1', r));
+  const blocker = http.createServer(); await new Promise((r) => blocker.listen(31280, '127.0.0.1', r));
   await assert.rejects(svc.start(), /already in use/);
   blocker.close(); assert.equal(svc.core.state, 'stopped');
 });
