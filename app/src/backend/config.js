@@ -1,6 +1,8 @@
 'use strict';
 // Builds a sing-box 1.14 config. Tag names (mixed-in, tun-in, dns-remote, dns-direct, proxy, direct) follow the
 // Android ConfigBuilderKt constants found in smali. Defaults come from res/xml/global_preferences.xml.
+const fs = require('fs');
+const path = require('path');
 
 const DEFAULT_SETTINGS = {
   mixedPort: 2080,
@@ -11,7 +13,8 @@ const DEFAULT_SETTINGS = {
   remoteDns: 'https://dns.google/dns-query',
   directDns: 'https://223.5.5.5/dns-query',
   ipv6Mode: 'prefer_ipv4',     // prefer_ipv4 | prefer_ipv6 | ipv4_only | ipv6_only
-  connectionTestURL: 'https://cp.cloudflare.com/generate_204', // the Jiajia core's Clash API ignores http:// test URLs (clashapi/proxies.go), so https is required
+  connectionTestURL: 'https://www.google.com/generate_204', // the Jiajia core's Clash API ignores http:// test URLs (clashapi/proxies.go), so https is required
+  testConcurrency: 5,          // parallel URL tests (same as the Android app's connection test concurrency)
   logLevel: 'info',
   apiPort: 9090,
   tun: false,                  // TUN mode (needs admin + wintun.dll on Windows; not verified in the sandbox)
@@ -95,7 +98,7 @@ function describeRule(rule, i) {
   return { index: i, match: cond.join('，') || '全部流量', outbound, raw: rule };
 }
 
-function buildConfig({ nodes, selectedTag, settings = {}, userRules = [], secret = '', cachePath = 'cache.db' }) {
+function buildConfig({ nodes, selectedTag, settings = {}, userRules = [], secret = '', cachePath = 'cache.db', rulesetDir = null }) {
   const s = { ...DEFAULT_SETTINGS, ...settings };
   const warnings = [];
   if (!nodes || nodes.length === 0) throw new Error('No nodes available');
@@ -130,11 +133,23 @@ function buildConfig({ nodes, selectedTag, settings = {}, userRules = [], secret
   const ruleSets = [];
   if (s.mode === 'rule') {
     rules.push({ rule_set: ['geosite-cn', 'geoip-cn'], outbound: 'direct' });
-    const base = s.rulesProviderBase.replace(/\/$/, '');
-    ruleSets.push(
-      { type: 'remote', tag: 'geosite-cn', format: 'binary', url: `${base}/sing-geosite/rule-set/geosite-cn.srs`, download_detour: 'proxy', update_interval: '7d' },
-      { type: 'remote', tag: 'geoip-cn', format: 'binary', url: `${base}/sing-geoip/rule-set/geoip-cn.srs`, download_detour: 'proxy', update_interval: '7d' },
-    );
+    // Prefer the bundled local rule-set files (same as the Android app shipping geo assets):
+    // the kernel blocks startup on remote rule-set download, which fails whenever GitHub is
+    // unreachable. Local files make rule mode start offline.
+    const localFiles = rulesetDir && ['geosite-cn.srs', 'geoip-cn.srs'].every((f) => fs.existsSync(path.join(rulesetDir, f)));
+    if (localFiles) {
+      ruleSets.push(
+        { type: 'local', tag: 'geosite-cn', format: 'binary', path: path.join(rulesetDir, 'geosite-cn.srs') },
+        { type: 'local', tag: 'geoip-cn', format: 'binary', path: path.join(rulesetDir, 'geoip-cn.srs') },
+      );
+    } else {
+      warnings.push('本地规则集缺失（ruleset/ 目录），规则模式启动时将联网下载大陆规则，网络不通会导致内核启动失败');
+      const base = s.rulesProviderBase.replace(/\/$/, '');
+      ruleSets.push(
+        { type: 'remote', tag: 'geosite-cn', format: 'binary', url: `${base}/sing-geosite/rule-set/geosite-cn.srs`, download_detour: 'proxy', update_interval: '7d' },
+        { type: 'remote', tag: 'geoip-cn', format: 'binary', url: `${base}/sing-geoip/rule-set/geoip-cn.srs`, download_detour: 'proxy', update_interval: '7d' },
+      );
+    }
   }
   const route = { rules, final: 'proxy', default_domain_resolver: { server: 'dns-direct' }, auto_detect_interface: true };
   if (ruleSets.length) route.rule_set = ruleSets;

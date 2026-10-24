@@ -131,6 +131,10 @@ async function runShots(dir) {
   fs.mkdirSync(dir, { recursive: true });
   await new Promise((r) => win.webContents.once('did-finish-load', r));
   await new Promise((r) => setTimeout(r, Number(process.env.JIAJIA_SHOT_PRE || 1500)));
+  // JIAJIA_PROBE: optional JS snippet executed in the renderer before screenshots (test/verification hook)
+  if (process.env.JIAJIA_PROBE) {
+    try { console.log('PROBE', JSON.stringify(await win.webContents.executeJavaScript(process.env.JIAJIA_PROBE))); } catch (e) { console.log('PROBE_ERR', e.message); }
+  }
   for (const page of (process.env.JIAJIA_SHOT_PAGES || 'home,nodes,subs,rules,conns,stats,logs,settings').split(',')) {
     await win.webContents.executeJavaScript(`window.__go && window.__go(${JSON.stringify(page)})`);
     await new Promise((r) => setTimeout(r, Number(process.env.JIAJIA_SHOT_WAIT || 700)));

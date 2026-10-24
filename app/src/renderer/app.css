@@ -95,6 +95,10 @@ body {
 .foot .row { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .foot .row .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .foot b { color: var(--ink-2); font-weight: 600; font-variant-numeric: tabular-nums; }
+.foot .sp { flex: 1; }
+.foot button { display: inline-flex; align-items: center; color: var(--ink-3); background: transparent; border: 0; cursor: pointer; padding: 2px; border-radius: 5px; }
+.foot button:hover { color: var(--ink); background: var(--card-2); }
+.foot button svg { width: 14px; height: 14px; }
 
 .main { flex: 1; overflow-y: auto; min-width: 0; }
 .page { max-width: 1180px; margin: 0 auto; padding: 26px 28px 40px; animation: fadein .18s ease; }

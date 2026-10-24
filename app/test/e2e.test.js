@@ -49,6 +49,8 @@ test.before(async () => {
   await sleep(1500);
   svc = new AppService({ userData: path.join(tmp, 'ud'), appRoot: APP, binary: BIN, sysproxy: fakeSys });
   await svc.init();
+  // point URL tests at the local https endpoint before any test runs (the new default targets google.com)
+  await svc.setSettings({ connectionTestURL: 'https://127.0.0.1:18443/ping' });
 });
 test.after(async () => {
   if (svc) await svc.shutdown().catch(() => {});
@@ -66,9 +68,14 @@ test('subscription import from a real HTTP endpoint (base64) with traffic info',
   assert.equal(st.nodes.find((n) => n.id === st.selectedId).tag, 'node-A');
 });
 
-test('TCP latency works before the core is started', async () => {
-  await svc.testNodes();
-  const st = svc.state(); assert.ok(st.nodes.every((n) => typeof n.latency === 'number' && n.latencyKind === 'tcp'));
+test('URL test: core is temp-started when stopped, real delays come back, core stops again', async () => {
+  assert.equal(svc.core.state, 'stopped');
+  const r = await svc.testNodes();
+  assert.equal(r.mode, 'url');
+  const st = svc.state();
+  assert.ok(st.nodes.every((n) => typeof n.latency === 'number' && n.latencyKind === 'url'), JSON.stringify(st.nodes.map((n) => [n.tag, n.latency, n.latencyKind])));
+  assert.equal(svc.core.state, 'stopped', 'temp start cleaned up');
+  assert.deepEqual(sysproxyCalls, [], 'temp start never touches the system proxy');
 });
 
 test('settings are validated and persisted', async () => {

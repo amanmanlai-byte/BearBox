@@ -2,20 +2,22 @@
 const path = require('path');
 const { EventEmitter } = require('events');
 const { Store, dayKey } = require('./store');
-const { Core, resolveCoreBinary, tcpPing } = require('./core');
+const { Core, resolveCoreBinary, resolveRulesetDir, tcpPing } = require('./core');
 const { buildConfig, DEFAULT_SETTINGS } = require('./config');
 const { parseSubscriptionBody, dedupeTags, fetchSubscription } = require('./subscription');
 const { parseLinks } = require('./links');
 const { SystemProxy } = require('./sysproxy');
 
 // Settings that only affect the UI or app shell; changing them must not restart a running core.
-const NO_RESTART_KEYS = ['setSystemProxy', 'autoStartCore', 'connectionTestURL', 'theme', 'closeToTray', 'autoUpdateSubsMin'];
+const NO_RESTART_KEYS = ['setSystemProxy', 'autoStartCore', 'connectionTestURL', 'testConcurrency', 'theme', 'closeToTray', 'autoUpdateSubsMin'];
+const LEGACY_TEST_URL = 'https://cp.cloudflare.com/generate_204'; // default before v0.2.2
 
 class AppService extends EventEmitter {
-  constructor({ userData, appRoot, resourcesPath, sysproxy, binary, fetchSub = fetchSubscription, autoUpdateTimer = null }) {
+  constructor({ userData, appRoot, resourcesPath, sysproxy, binary, fetchSub = fetchSubscription, autoUpdateTimer = null, core = null }) {
     super();
     this.store = new Store(path.join(userData, 'data.json'));
-    this.core = new Core({ binary: binary || resolveCoreBinary(appRoot, resourcesPath), workDir: path.join(userData, 'core-run') });
+    this.core = core || new Core({ binary: binary || resolveCoreBinary(appRoot, resourcesPath), workDir: path.join(userData, 'core-run') });
+    this.rulesetDir = resolveRulesetDir(appRoot, resourcesPath);
     this.sysproxy = sysproxy || new SystemProxy();
     this.fetchSub = fetchSub;
     this.proxyApplied = false; this.starting = false; this.lastError = null; this.coreVersion = null;
@@ -32,6 +34,8 @@ class AppService extends EventEmitter {
 
   async init() {
     this.coreVersion = await this.core.version();
+    // migrate the pre-0.2.2 default test URL to the new one; only the untouched default is replaced
+    if (this.d.settings.connectionTestURL === LEGACY_TEST_URL) { this.d.settings.connectionTestURL = DEFAULT_SETTINGS.connectionTestURL; this.store.save(); }
     // crash recovery: a previous run may have left the system proxy pointing at a dead port
     if (this.d.sysproxyBackup && this.core.state === 'stopped') { try { await this.sysproxy.disable(this.d.sysproxyBackup.backup); } catch { /* best effort */ } this.d.sysproxyBackup = null; this.store.save(); }
     this.scheduleAutoUpdate();
@@ -146,23 +150,43 @@ class AppService extends EventEmitter {
     this.emitState();
   }
 
+  /**
+   * URL test (real HTTPS request through each node, done by the kernel). If the core is
+   * stopped it is started temporarily without touching the system proxy and stopped again
+   * afterwards. TCP connect timing is only a fallback when the kernel cannot start, and the
+   * result is reported so the UI can say so - never silently.
+   */
   async testNodes(ids) {
     const list = this.d.nodes.filter((n) => !ids || ids.includes(n.id));
-    const running = this.core.state === 'running';
+    if (!list.length) return { mode: 'none', count: 0 };
     const url = this.d.settings.connectionTestURL;
+    let running = this.core.state === 'running';
+    let tempStarted = false;
+    let fallbackError = null;
+    if (!running) {
+      try {
+        await this.start({ forTest: true });
+        running = this.core.state === 'running';
+        tempStarted = running;
+      } catch (e) { fallbackError = e.message; this.core.pushLog('WARN URL 测速需临时启动内核失败，改用 TCP 连接测试: ' + e.message); }
+    }
+    const mode = running ? 'url' : 'tcp';
+    const workers = Math.max(1, Math.min(32, Number(this.d.settings.testConcurrency) || 5));
     let i = 0;
     const worker = async () => {
       while (i < list.length) {
         const n = list[i++];
         try {
-          if (running) { n.latency = await this.core.delay(n.outbound.tag, url, 6000); n.latencyKind = 'url'; }
-          else { n.latency = await tcpPing(n.outbound.server, n.outbound.server_port, 3000); n.latencyKind = 'tcp'; }
-        } catch { n.latency = null; n.latencyKind = running ? 'url' : 'tcp'; }
-        n.testedAt = Date.now(); this.emitState();
+          if (running) n.latency = await this.core.delay(n.outbound.tag, url, 6000);
+          else n.latency = await tcpPing(n.outbound.server, n.outbound.server_port, 3000);
+        } catch { n.latency = null; }
+        n.latencyKind = mode; n.testedAt = Date.now(); this.emitState();
       }
     };
-    await Promise.all(Array.from({ length: Math.min(8, list.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(workers, list.length) }, worker));
+    if (tempStarted) await this.stop();
     this.store.save();
+    return { mode, count: list.length, error: fallbackError };
   }
 
   // ---------- start / stop ----------
@@ -170,19 +194,19 @@ class AppService extends EventEmitter {
     const d = this.d;
     const nodes = d.nodes.map((n) => n.outbound);
     const sel = d.nodes.find((n) => n.id === d.selectedId)?.outbound.tag;
-    const r = buildConfig({ nodes, selectedTag: sel, settings: d.settings, userRules: d.rules, secret: d.secret, cachePath: 'cache.db' });
+    const r = buildConfig({ nodes, selectedTag: sel, settings: d.settings, userRules: d.rules, secret: d.secret, cachePath: 'cache.db', rulesetDir: this.rulesetDir });
     this.routePreview = r.routePreview;
     return r;
   }
 
-  async start() {
+  async start({ forTest } = {}) {
     if (this.starting || this.core.state !== 'stopped') return;
     this.starting = true; this.lastError = null; this.emitState();
     try {
       const { config, warnings } = this.build();
       warnings.forEach((w) => this.core.pushLog('WARN ' + w));
       await this.core.start({ config, apiPort: this.d.settings.apiPort, secret: this.d.secret });
-      if (this.d.settings.setSystemProxy && !this.d.settings.tun) await this.applyProxy();
+      if (!forTest && this.d.settings.setSystemProxy && !this.d.settings.tun) await this.applyProxy();
     } catch (e) {
       this.lastError = e.message; await this.core.stop().catch(() => {}); await this.cleanupProxy();
       throw e;
@@ -219,6 +243,7 @@ class AppService extends EventEmitter {
     if (port === api) throw new Error('代理端口与 API 端口不能相同');
     if (!/^https:\/\//i.test(String(s.connectionTestURL))) throw new Error('测速地址必须以 https:// 开头（内核会忽略 http:// 地址）');
     s.mixedPort = port; s.apiPort = api;
+    if (!(Number(s.testConcurrency) > 0)) s.testConcurrency = 5; else s.testConcurrency = Math.min(32, Math.floor(Number(s.testConcurrency)));
     const needRestart = this.core.state === 'running' && JSON.stringify(s) !== JSON.stringify(this.d.settings) && Object.keys(patch).some((k) => !NO_RESTART_KEYS.includes(k));
     this.d.settings = s; this.store.save(); this.emitState();
     if (Object.keys(patch).some((k) => k === 'autoUpdateSubsMin')) this.scheduleAutoUpdate();

@@ -36,7 +36,11 @@ function renderNav() {
       h('b', { ref: 'state' }, { stopped: '内核已停止', starting: '正在启动…', running: '内核运行中', stopping: '正在停止…' }[st] || '内核已停止')),
     h('div', { class: 'row', title: sel ? '当前节点' : '' }, h('span', { class: 't', ref: 'node' }, sel ? sel.tag : '未选择节点')),
     h('div', { class: 'row', ref: 'speed', style: { visibility: st === 'running' ? 'visible' : 'hidden' } }, '↓ ', h('b', { ref: 'down' }, '-'), '  ↑ ', h('b', { ref: 'up' }, '-')),
-    h('div', { class: 'row' }, h('span', { class: 't', title: S && S.core.binary ? S.core.binary : '' }, (S && S.core.version ? S.core.version.replace(/^sing-box version /, 'sing-box ') : '未找到内核'))),
+    h('div', { class: 'row' }, h('span', { class: 't', title: S && S.core.binary ? S.core.binary : '' }, (S && S.core.version ? S.core.version.replace(/^sing-box version /, 'sing-box ') : '未找到内核')),
+      h('span', { class: 'sp' }),
+      h('button', { class: 'btn small ghost', title: '切换浅色/深色主题', 'aria-label': '切换主题', style: { height: '22px', padding: '0 6px' },
+        onclick: () => { const cur = X.S && X.S.settings.theme === 'dark'; act(() => api('setSettings', { theme: cur ? 'light' : 'dark' })); } },
+        svgIcon(X.S && X.S.settings.theme === 'dark' ? ICONS.sun : ICONS.moon))),
   );
   footRefs = {};
   foot.querySelectorAll('[ref]').forEach((el) => { footRefs[el.getAttribute('ref')] = el; });

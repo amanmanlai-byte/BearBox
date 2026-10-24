@@ -130,6 +130,33 @@ PAGES.home = () => {
   };
 };
 
+// preset URL test endpoints (editable via 自定义)
+const TEST_URL_PRESETS = [
+  ['https://www.google.com/generate_204', 'Google'],
+  ['https://cp.cloudflare.com/generate_204', 'Cloudflare'],
+  ['https://www.gstatic.com/generate_204', 'gstatic'],
+];
+function testUrlSelect() {
+  const S = X.S;
+  const cur = S.settings.connectionTestURL;
+  const preset = TEST_URL_PRESETS.find(([u]) => u === cur);
+  const sel = h('select', { 'aria-label': '测速地址', 'data-keep': 'testUrl', style: { maxWidth: '170px' }, title: 'URL 测速地址（经各节点发起真实 HTTPS 请求）' },
+    TEST_URL_PRESETS.map(([u, l]) => h('option', { value: u }, l + ' 204')),
+    h('option', { value: '__custom' }, preset ? '自定义…' : '自定义：' + (cur ? new URL(cur).hostname : '')));
+  sel.value = preset ? cur : '__custom';
+  sel.addEventListener('change', () => {
+    if (sel.value === '__custom') {
+      const inp = h('input', { type: 'url', value: cur, placeholder: 'https://…/generate_204', style: { width: '100%' } });
+      modal('自定义测速地址', h('div', { class: 'field' }, h('label', {}, '必须是 https:// 地址（这版内核会忽略 http://）'), inp),
+        (close) => [h('button', { class: 'btn', onclick: close }, '取消'),
+          h('button', { class: 'btn primary', onclick: (e) => act(async () => { const v = inp.value.trim(); await api('setSettings', { connectionTestURL: v }); close(); }, '测速地址已保存', e.currentTarget) }, '保存')]);
+      return;
+    }
+    act(() => api('setSettings', { connectionTestURL: sel.value }), '测速地址已切换');
+  });
+  return sel;
+}
+
 // ================================================================ nodes
 PAGES.nodes = () => {
   const S = X.S;
@@ -152,9 +179,8 @@ PAGES.nodes = () => {
         h('i', { class: 'c-' + k, style: { width: '9px', height: '9px', borderRadius: '3px' } }), LAT_NAME[k],
         h('div', { class: 'bar-mini' }, h('i', { style: { width: (counts[k] / total) * 100 + '%', background: LAT_COLOR[k] } })),
         h('b', {}, String(counts[k])))))),
-    h('div', { class: 'note', style: { marginTop: '10px' } }, isRunning()
-      ? '内核运行中：测速通过各节点发起真实 HTTPS 请求（结果标注“HTTPS”）。标注“TCP”的是内核未运行时测的 TCP 连接耗时。'
-      : '内核未运行：测速只能测量 TCP 连接耗时，仅供参考；启动内核后测速才是真实的代理延迟。'));
+    h('div', { class: 'note', style: { marginTop: '10px' } },
+      '测速是 URL Test：内核经每个节点向测速地址发起真实 HTTPS 请求。内核未运行时会自动临时启动内核（不动系统代理），测完自动关闭；仅当内核无法启动时才降级为 TCP 连接测试，并在结果中标注。'));
 
   const maxLat = Math.max(600, ...S.nodes.map((n) => n.latency || 0));
   const rows = list.map((n) => {
@@ -172,7 +198,7 @@ PAGES.nodes = () => {
       h('td', { class: 'mono mut2' }, `${n.server}:${n.port}`),
       h('td', {}, lat),
       h('td', { class: 'r', style: { whiteSpace: 'nowrap' } },
-        h('button', { class: 'btn small', onclick: (e) => { e.stopPropagation(); act(() => api('testNodes', { ids: [n.id] })); } }, '测速'), ' ',
+        h('button', { class: 'btn small', title: 'URL 测速', onclick: (e) => { e.stopPropagation(); act(() => api('testNodes', { ids: [n.id] }), (r) => r.mode === 'url' ? 'URL 测速完成' : '内核未能启动，已降级为 TCP 测试'); } }, '测速'), ' ',
         h('button', { class: 'btn small ghost', title: '详情', onclick: (e) => { e.stopPropagation(); nodeDetail(n); } }, 'JSON'), ' ',
         h('button', { class: 'btn small danger', onclick: (e) => { e.stopPropagation(); if (confirm(`删除节点“${n.tag}”？`)) act(() => api('removeNode', { id: n.id }), '已删除'); } }, '删除')));
   });
@@ -194,13 +220,13 @@ PAGES.nodes = () => {
         h('thead', {}, h('tr', {}, h('th', { style: { width: '34px' } }, ''), h('th', {}, '名称'), h('th', {}, '协议'), h('th', {}, '地址'), h('th', {}, '延迟'), h('th', { class: 'r' }, '操作'))),
         h('tbody', {}, rows.length ? rows : h('tr', {}, h('td', { colspan: 6, class: 'mut2', style: { textAlign: 'center', padding: '26px' } }, '没有匹配的节点')))));
 
-  const testAll = h('button', { class: 'btn primary', disabled: S.nodes.length === 0, onclick: (e) => act(() => api('testNodes', {}), '测速完成', e.currentTarget) }, '测速全部');
+  const testAll = h('button', { class: 'btn primary', disabled: S.nodes.length === 0, onclick: (e) => act(() => api('testNodes', {}), (r) => r.mode === 'url' ? `URL 测速完成（${r.count} 个节点，并发 ${S.settings.testConcurrency}）` : `内核未能启动，已降级为 TCP 连接测试（${r.error || '未知原因'}）`, e.currentTarget) }, 'URL 测速全部');
   const drawDist = () => {
     const colors = { good: CVAR('--ok'), mid: '#84cc16', slow: CVAR('--warn'), bad: CVAR('--bad'), none: CVAR('--ink-3') };
     drawDonut(donut, Object.keys(counts).map((k) => ({ value: counts[k], color: colors[k] })), String(S.nodes.length), '个节点');
   };
   setTimeout(drawDist, 0);
-  return { el: h('div', { class: 'page' }, pageHead('节点', `${S.nodes.length} 个节点 · 点击行切换当前节点`, search, subSel, sortSel, testAll), distCard, body),
+  return { el: h('div', { class: 'page' }, pageHead('节点', `${S.nodes.length} 个节点 · 点击行切换当前节点`, testUrlSelect(), search, subSel, sortSel, testAll), distCard, body),
     resize: drawDist };
 };
 
@@ -499,7 +525,11 @@ PAGES.settings = () => {
   const S = X.S; const s = S.settings; const F = {};
   const text = (k, type = 'text') => (F[k] = h('input', { type, value: s[k] }));
   const check = (k, label, dis) => { F[k] = h('input', { type: 'checkbox', checked: !!s[k], disabled: dis }); return h('label', { class: 'switch' }, F[k], label); };
-  const sel = (k, opts) => { F[k] = h('select', {}, opts.map(([v, l]) => h('option', { value: v }, l))); F[k].value = s[k]; return F[k]; };
+  // theme applies instantly: it is a pure UI preference, no save button needed
+  const sel = (k, opts) => {
+    F[k] = h('select', { onchange: k === 'theme' ? () => act(() => api('setSettings', { theme: F[k].value })) : null }, opts.map(([v, l]) => h('option', { value: v }, l)));
+    F[k].value = s[k]; return F[k];
+  };
   const fld = (l, el, span, hint) => h('div', { class: 'field' + (span ? ' span2' : '') }, h('label', {}, l), el, hint ? h('div', { class: 'note' }, hint) : null);
   const sect = (t, ...kids) => h('div', { class: 'card sect' }, h('h2', {}, t), h('div', { class: 'form-grid' }, kids));
 
@@ -528,13 +558,14 @@ PAGES.settings = () => {
       sect('内核',
         fld('Clash API 端口', text('apiPort', 'number'), 0, '仅监听 127.0.0.1，客户端用它读取实时数据'),
         fld('日志级别', sel('logLevel', [['trace', 'trace'], ['debug', 'debug'], ['info', 'info'], ['warn', 'warn'], ['error', 'error']])),
-        fld('测速地址', text('connectionTestURL'), 1, '必须是 https:// 地址：这版内核会忽略 http:// 测速地址')),
+        fld('测速地址', text('connectionTestURL'), 1, '必须是 https:// 地址：这版内核会忽略 http:// 测速地址；节点页也可快速切换'),
+        fld('测速并发数', text('testConcurrency', 'number'), 0, '同时测试的节点数，默认 5'),
         h('div', { class: 'span2 note' }, `内核：${S.core.version || '未找到'}`, h('br'), `路径：${S.core.binary}`)),
       sect('界面',
-        fld('主题', sel('theme', [['light', '浅色'], ['dark', '深色']])),
+        fld('主题', sel('theme', [['light', '浅色'], ['dark', '深色']]), 0, '选择后立即生效'),
         h('div', {}, check('closeToTray', '关闭窗口时最小化到系统托盘'))),
       sect('系统',
         h('div', {}, check('setSystemProxy', '启动内核时自动设置 Windows 系统代理', !S.sysproxySupported), !S.sysproxySupported ? h('div', { class: 'note' }, '当前系统不是 Windows，此项不可用') : null),
-        h('div', {}, check('autoStartCore', '打开客户端时自动启动内核'))));
+        h('div', {}, check('autoStartCore', '打开客户端时自动启动内核')))));
   return { el };
 };

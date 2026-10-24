@@ -33,6 +33,12 @@ function resolveCoreBinary(appRoot, resourcesPath) {
   return candidates.find((p) => fs.existsSync(p)) || candidates[candidates.length - 1];
 }
 
+/** Bundled local rule-set assets (geosite-cn.srs / geoip-cn.srs). First existing dir wins. */
+function resolveRulesetDir(appRoot, resourcesPath) {
+  const candidates = [resourcesPath && path.join(resourcesPath, 'ruleset'), path.join(appRoot, 'ruleset')].filter(Boolean);
+  return candidates.find((p) => fs.existsSync(p)) || null;
+}
+
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Map a Clash API connection object to the shape the UI uses. Pure, unit tested. */
@@ -132,15 +138,22 @@ class Core extends EventEmitter {
 
     // wait for API
     for (let i = 0; i < 60; i++) {
-      if (!this.proc) throw new Error('Core exited during startup, see logs');
+      if (!this.proc) throw this.startupError();
       try { await this.get('/version'); this.apiOk = true; break; } catch { await wait(250); }
     }
-    if (!this.apiOk) { await this.stop(); throw new Error('Core API did not become ready'); }
+    if (!this.apiOk) { await this.stop(); throw this.startupError('内核 API 未就绪'); }
     // counters of a fresh core process start at zero, so the baseline is zero (not the first poll)
     this.last = { t: Date.now(), up: 0, down: 0 };
     this.state = 'running'; this.emit('status', this.status());
     this.timer = setInterval(() => this.poll().catch(() => {}), 1000);
     return true;
+  }
+
+  /** Startup failure with the kernel's own last error line, so the UI shows the real cause. */
+  startupError(prefix) {
+    const lastErr = [...this.logs].reverse().find((l) => ['error', 'fatal', 'panic'].includes(l.level));
+    const detail = lastErr ? '：' + lastErr.text.slice(0, 300) : '';
+    return new Error((prefix || '内核启动失败') + detail);
   }
 
   async stop() {
@@ -202,4 +215,4 @@ function tcpPing(host, port, timeout = 3000) {
   });
 }
 
-module.exports = { Core, resolveCoreBinary, tcpPing, portFree, isWindowsAdmin, validateTunPrerequisites, mapConnection };
+module.exports = { Core, resolveCoreBinary, resolveRulesetDir, tcpPing, portFree, isWindowsAdmin, validateTunPrerequisites, mapConnection };

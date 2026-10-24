@@ -82,6 +82,21 @@ test('kernel accepts config for every protocol (rule mode)', async () => {
   assert.ok(r.ok, r.output);
 });
 
+test('bundled local rule-sets are used when present; remote fallback with a warning otherwise', async () => {
+  const nodes = [parseLink(LINKS.ss_sip002)];
+  const local = buildConfig({ nodes, settings: { mode: 'rule' }, rulesetDir: path.join(APP, 'ruleset') });
+  assert.ok(local.config.route.rule_set.every((rs) => rs.type === 'local'), JSON.stringify(local.config.route.rule_set));
+  assert.ok(!local.warnings.length, 'no warning expected with local files');
+  const f = path.join(os.tmpdir(), `jj-lrs-${process.pid}.json`);
+  fs.writeFileSync(f, JSON.stringify(local.config));
+  const chk = await core.check(f); fs.unlinkSync(f);
+  assert.ok(chk.ok, chk.output); // proves the bundled .srs files are valid rule-sets
+
+  const fallback = buildConfig({ nodes, settings: { mode: 'rule' }, rulesetDir: null });
+  assert.ok(fallback.config.route.rule_set.every((rs) => rs.type === 'remote'));
+  assert.ok(fallback.warnings.some((w) => /本地规则集缺失/.test(w)));
+});
+
 test('kernel accepts global mode, LAN access, ipv6, custom DNS', async () => {
   const nodes = [parseLink(LINKS.ss_sip002)];
   for (const s of [{ mode: 'global' }, { allowAccess: true, bypassLan: false, trafficSniffing: false }, { ipv6Mode: 'ipv4_only', remoteDns: 'tls://1.1.1.1', directDns: 'local' }, { remoteDns: 'udp://8.8.8.8', directDns: '223.5.5.5' }]) {

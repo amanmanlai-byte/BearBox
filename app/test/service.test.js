@@ -10,6 +10,23 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jj-svc-'));
 const fakeSys = { supported: false, async enable() { return { ok: true, backup: null }; }, async disable() { return { ok: true }; } };
 const mkSvc = (opts = {}) => new AppService({ userData: tmp(), appRoot: path.join(__dirname, '..'), sysproxy: fakeSys, binary: 'x.exe', ...opts });
 
+/** Minimal Core stand-in so testNodes' temp-start path is unit testable. */
+function fakeCore({ startOk = true } = {}) {
+  const { EventEmitter } = require('events');
+  const c = new EventEmitter();
+  c.state = 'stopped'; c.binary = 'x.exe'; c.startCalls = []; c.stopCalls = 0; c.delayCalls = [];
+  c.version = async () => 'fake-1.0';
+  c.start = async () => { if (!startOk) throw new Error('no kernel'); c.state = 'running'; c.startCalls.push(Date.now()); };
+  c.stop = async () => { c.stopCalls++; c.state = 'stopped'; };
+  c.delay = async (tag, url) => { c.delayCalls.push([tag, url]); return 42; };
+  c.selectNode = async () => {};
+  c.pushLog = () => {};
+  c.status = () => ({ state: c.state, apiOk: false });
+  c.samples = []; c.logs = []; c.connections = []; c.upTotal = 0; c.downTotal = 0; c.memory = 0;
+  return c;
+}
+const LINK = 'ss://' + Buffer.from('aes-128-gcm:pw').toString('base64') + '@127.0.0.1:1#n';
+
 test('mapConnection prefers sniffed host and extracts the process basename', () => {
   const c = mapConnection({
     id: 'a', upload: 1, download: 2, start: '2026-01-01T00:00:00Z', chains: ['proxy', 'n1'], rule: 'domain', rulePayload: 'x.com',
@@ -77,11 +94,62 @@ test('UI-only settings never restart a running core', async () => {
   svc.core.state = 'running';
   let restarted = false;
   svc.restart = async () => { restarted = true; };
-  await svc.setSettings({ theme: 'dark', closeToTray: false, autoUpdateSubsMin: 30 });
+  await svc.setSettings({ theme: 'dark', closeToTray: false, autoUpdateSubsMin: 30, testConcurrency: 3 });
   assert.equal(restarted, false);
   assert.equal(svc.d.settings.theme, 'dark');
+  assert.equal(svc.d.settings.testConcurrency, 3);
   await svc.setSettings({ mixedPort: 2081 });
   assert.equal(restarted, true);
+});
+
+test('invalid test concurrency falls back to 5', async () => {
+  const svc = mkSvc();
+  await svc.setSettings({ testConcurrency: NaN });
+  assert.equal(svc.d.settings.testConcurrency, 5);
+  await svc.setSettings({ testConcurrency: 99 });
+  assert.equal(svc.d.settings.testConcurrency, 32);
+});
+
+test('testNodes URL-tests by temp-starting the core, then stops it', async () => {
+  const core = fakeCore();
+  const svc = mkSvc({ core });
+  svc.importLinks({ text: LINK });
+  const r = await svc.testNodes();
+  assert.equal(r.mode, 'url');
+  assert.equal(r.error, null);
+  assert.equal(core.startCalls.length, 1);
+  assert.equal(core.stopCalls, 1, 'temp start stopped again');
+  assert.equal(core.delayCalls.length, 1);
+  assert.equal(core.delayCalls[0][1], svc.d.settings.connectionTestURL);
+  const n = svc.d.nodes[0];
+  assert.equal(n.latency, 42); assert.equal(n.latencyKind, 'url');
+});
+
+test('testNodes falls back to TCP when the kernel cannot start, and says so', async () => {
+  const core = fakeCore({ startOk: false });
+  const svc = mkSvc({ core });
+  svc.importLinks({ text: LINK });
+  const r = await svc.testNodes();
+  assert.equal(r.mode, 'tcp');
+  assert.match(r.error, /no kernel/);
+  const n = svc.d.nodes[0];
+  assert.equal(n.latency, null, 'port 1 refuses instantly');
+  assert.equal(n.latencyKind, 'tcp');
+});
+
+test('legacy default test URL is migrated to google generate_204 on init', async () => {
+  const dir = tmp();
+  const data = { version: 1, settings: { connectionTestURL: 'https://cp.cloudflare.com/generate_204' }, subscriptions: [], nodes: [], rules: [], daily: {} };
+  fs.writeFileSync(path.join(dir, 'data.json'), JSON.stringify(data));
+  const svc = mkSvc({ userData: dir, core: fakeCore() });
+  await svc.init();
+  assert.equal(svc.d.settings.connectionTestURL, 'https://www.google.com/generate_204');
+  // a custom URL is left alone
+  const dir2 = tmp();
+  fs.writeFileSync(path.join(dir2, 'data.json'), JSON.stringify({ ...data, settings: { connectionTestURL: 'https://my.example/204' } }));
+  const svc2 = mkSvc({ userData: dir2, core: fakeCore() });
+  await svc2.init();
+  assert.equal(svc2.d.settings.connectionTestURL, 'https://my.example/204');
 });
 
 test('state() exposes the route preview after build()', () => {
