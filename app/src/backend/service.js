@@ -148,7 +148,17 @@ class AppService extends EventEmitter {
   async selectNode(id) {
     const n = this.d.nodes.find((x) => x.id === id); if (!n) throw new Error('节点不存在');
     this.d.selectedId = id; this.store.save();
-    if (this.core.state === 'running') await this.core.selectNode(n.outbound.tag);
+    if (this.core.state === 'running') {
+      await this.core.selectNode(n.outbound.tag);
+      // verify the runtime pick (the API may silently drop a bad tag); retry once
+      try {
+        const now = await this.core.currentNode();
+        if (now !== n.outbound.tag) { await this.core.selectNode(n.outbound.tag); }
+      } catch { /* verification is best effort */ }
+      // keep-alive connections opened through the previous node keep exiting there;
+      // drop them so the new node is used immediately (same as Clash dashboards)
+      await this.core.closeAll().catch(() => {});
+    }
     this.emitState();
   }
 
@@ -208,6 +218,10 @@ class AppService extends EventEmitter {
       const { config, warnings } = this.build();
       warnings.forEach((w) => this.core.pushLog('WARN ' + w));
       await this.core.start({ config, apiPort: this.d.settings.apiPort, secret: this.d.secret });
+      // make the UI selection authoritative: after a restart the runtime pick must
+      // match selectedId regardless of what the kernel's cache file restored
+      const selTag = this.d.nodes.find((n) => n.id === this.d.selectedId)?.outbound.tag;
+      if (selTag) await this.core.selectNode(selTag).catch((e) => this.core.pushLog('WARN 启动后应用节点选择失败: ' + e.message));
       if (!forTest && this.d.settings.setSystemProxy && !this.d.settings.tun) await this.applyProxy();
     } catch (e) {
       this.lastError = e.message; await this.core.stop().catch(() => {}); await this.cleanupProxy();

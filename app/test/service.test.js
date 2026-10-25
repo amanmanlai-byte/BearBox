@@ -15,11 +15,14 @@ function fakeCore({ startOk = true } = {}) {
   const { EventEmitter } = require('events');
   const c = new EventEmitter();
   c.state = 'stopped'; c.binary = 'x.exe'; c.startCalls = []; c.stopCalls = 0; c.delayCalls = [];
+  c.selectCalls = []; c.closeAllCalls = 0; c._now = null; // _now: what currentNode() reports
   c.version = async () => 'fake-1.0';
   c.start = async () => { if (!startOk) throw new Error('no kernel'); c.state = 'running'; c.startCalls.push(Date.now()); };
   c.stop = async () => { c.stopCalls++; c.state = 'stopped'; };
   c.delay = async (tag, url) => { c.delayCalls.push([tag, url]); return 42; };
-  c.selectNode = async () => {};
+  c.selectNode = async (tag) => { c.selectCalls.push(tag); if (c.followPicks !== false) c._now = tag; };
+  c.currentNode = async () => c._now;
+  c.closeAll = async () => { c.closeAllCalls++; };
   c.pushLog = () => {};
   c.status = () => ({ state: c.state, apiOk: false });
   c.samples = []; c.logs = []; c.connections = []; c.upTotal = 0; c.downTotal = 0; c.memory = 0;
@@ -123,6 +126,43 @@ test('testNodes URL-tests by temp-starting the core, then stops it', async () =>
   assert.equal(core.delayCalls[0][1], svc.d.settings.connectionTestURL);
   const n = svc.d.nodes[0];
   assert.equal(n.latency, 42); assert.equal(n.latencyKind, 'url');
+});
+
+test('selectNode while running verifies the pick and drops old connections', async () => {
+  const core = fakeCore();
+  const svc = mkSvc({ core });
+  svc.importLinks({ text: LINK });
+  const n = svc.d.nodes[0];
+  core.state = 'running';
+  await svc.selectNode(n.id);
+  assert.deepEqual(core.selectCalls, [n.outbound.tag]);
+  assert.equal(core.closeAllCalls, 1, 'old keep-alive connections are dropped');
+  assert.equal(svc.d.selectedId, n.id);
+});
+
+test('selectNode retries once when the runtime pick does not match', async () => {
+  const core = fakeCore();
+  const svc = mkSvc({ core });
+  svc.importLinks({ text: LINK });
+  const n = svc.d.nodes[0];
+  core.state = 'running';
+  core.followPicks = false; // the kernel does not follow our PUT
+  core._now = 'stale-pick'; // currentNode() disagrees -> selectNode must retry
+  await svc.selectNode(n.id);
+  assert.equal(core.selectCalls.length, 2);
+});
+
+test('start() re-applies the UI selection so the kernel cache cannot override it', async () => {
+  const core = fakeCore();
+  const svc = mkSvc({ core });
+  svc.importLinks({ text: LINK });
+  const other = 'ss://' + Buffer.from('aes-128-gcm:pw2').toString('base64') + '@127.0.0.1:2#n2';
+  svc.importLinks({ text: other });
+  await svc.selectNode(svc.d.nodes[1].id); // select the second node while stopped
+  await svc.start();
+  assert.ok(core.startCalls.length === 1);
+  assert.deepEqual(core.selectCalls, [svc.d.nodes[1].outbound.tag], 'selection applied after boot');
+  await svc.stop();
 });
 
 test('testNodes falls back to TCP when the kernel cannot start, and says so', async () => {

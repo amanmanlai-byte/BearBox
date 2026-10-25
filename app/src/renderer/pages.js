@@ -240,7 +240,7 @@ PAGES.nodes = () => {
 
   const body = S.nodes.length === 0
     ? emptyState('nodes', '还没有节点', '添加订阅或导入分享链接后，节点会出现在这里。', h('button', { class: 'btn primary', onclick: () => goto('subs') }, '去添加'))
-    : h('div', { class: 'scroll', style: { maxHeight: 'calc(100vh - 420px)', minHeight: '200px' } },
+    : h('div', { class: 'scroll', 'data-keep-scroll': 'nodes', style: { maxHeight: 'calc(100vh - 420px)', minHeight: '200px' } },
       h('table', { class: 'tbl' },
         h('thead', {}, h('tr', {}, h('th', { style: { width: '34px' } }, ''), h('th', {}, '名称'), h('th', {}, '协议'), h('th', {}, '地址'), h('th', {}, '延迟'), h('th', { class: 'r' }, '操作'))),
         h('tbody', {}, rows.length ? rows : h('tr', {}, h('td', { colspan: 6, class: 'mut2', style: { textAlign: 'center', padding: '26px' } }, '没有匹配的节点')))));
@@ -363,7 +363,7 @@ PAGES.rules = () => {
       h('button', { class: 'btn small danger', onclick: () => confirm('删除这条规则？') && act(() => api('removeRule', { id: r.id }), '已删除') }, '删除'))));
 
   const body = S.rules.length
-    ? h('div', { class: 'scroll' }, h('table', { class: 'tbl' },
+    ? h('div', { class: 'scroll', 'data-keep-scroll': 'rules' }, h('table', { class: 'tbl' },
       h('thead', {}, h('tr', {}, h('th', {}, '启用'), h('th', {}, '名称'), h('th', {}, '匹配条件'), h('th', {}, '出站'), h('th', { class: 'r' }, '操作'))), h('tbody', {}, rows)))
     : emptyState('rules', '没有自定义规则', '自定义规则在内置规则之后、兜底规则之前生效，保存后内核自动重启。', h('button', { class: 'btn primary', onclick: () => ruleForm() }, '新建规则'));
 
@@ -439,7 +439,6 @@ PAGES.conns = () => {
     if (running2 && last) { rateD.textContent = fmtSpeed(last.down || 0); rateU.textContent = fmtSpeed(last.up || 0); }
     else { rateD.textContent = '-'; rateU.textContent = '-'; }
     drawSpark(spark, X.samples.slice(-60).map((s) => s.conn || 0), { color: '--down' });
-
     // process ranking
     const byProc = {};
     for (const c of list) { const k = c.process || ''; if (!k) continue; const o = (byProc[k] ||= { down: 0, up: 0 }); o.down += c.download || 0; o.up += c.upload || 0; }
@@ -452,6 +451,7 @@ PAGES.conns = () => {
       procs.forEach((p) => procBox.append(procRow(p.name, p.down, p.up, max)));
     }
 
+    const keepTop = wrap.firstChild && wrap.firstChild.classList && wrap.firstChild.classList.contains('scroll') ? wrap.firstChild.scrollTop : 0;
     wrap.replaceChildren();
     countEl.textContent = running2 ? `${list.length} 条活动连接` : '内核未运行';
     if (!running2) { wrap.append(emptyState('conns', '内核未运行', '启动后这里会实时列出所有经过代理内核的连接。', h('button', { class: 'btn primary', onclick: () => goto('home') }, '去启动'))); return; }
@@ -473,6 +473,7 @@ PAGES.conns = () => {
       h('table', { class: 'tbl' },
         h('thead', {}, h('tr', {}, ['目标', '进程', '网络', '规则', '出站链路', '上传', '下载', '时长', ''].map((t, i) => h('th', { class: i > 3 && i < 8 ? 'r' : '' }, t)))),
         h('tbody', {}, rows.length ? rows : h('tr', {}, h('td', { colspan: 9, class: 'mut2', style: { textAlign: 'center', padding: '26px' } }, '没有匹配的连接'))))));
+    if (keepTop) wrap.firstChild.scrollTop = keepTop; // 1s rebuilds must not scroll the table back to the top
   };
   const timer = setInterval(draw, 1000);
   return {

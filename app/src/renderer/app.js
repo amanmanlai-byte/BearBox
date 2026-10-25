@@ -66,9 +66,13 @@ function render() {
   if (!X.S) return;
   if (view && view.destroy) view.destroy();
   keepFocus.save();
+  // preserve scroll positions of inner scroll containers (node/conn tables live in
+  // their own .scroll divs; a full re-render must not jump them back to the top)
+  const oldKeeps = [...document.querySelectorAll('#main [data-keep-scroll]')].map((el) => el.scrollTop);
   view = PAGES[page]();
   const main = document.getElementById('main'); const top = main.scrollTop;
   main.replaceChildren(view.el); main.scrollTop = top;
+  document.querySelectorAll('#main [data-keep-scroll]').forEach((el, i) => { if (oldKeeps[i] != null) el.scrollTop = oldKeeps[i]; });
   keepFocus.restore(view.el);
   lastSig = stateSig(X.S);
   renderNav();

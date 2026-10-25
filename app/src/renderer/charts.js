@@ -285,7 +285,8 @@ class WorldMap {
     g.fillStyle = CVAR('--card-2');
     g.fillRect(0, 0, w, H);
 
-    // land: colored countries
+    // land: colored countries. Rings that cross the antimeridian are split into
+    // subpaths, otherwise panning produces horizontal color bands across the map.
     g.lineWidth = 1;
     for (const f of this.world.features || []) {
       const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates : [];
@@ -294,34 +295,49 @@ class WorldMap {
       g.strokeStyle = document.documentElement.dataset.theme === 'dark' ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.55)';
       for (const poly of polys) {
         for (const ring of poly) {
-          if (!ring.length) continue;
+          if (ring.length < 2) continue;
+          const subpaths = []; let cur = [];
+          for (const [lon, lat] of ring) {
+            const p = P(lon, lat);
+            if (cur.length && Math.abs(p.x - cur[cur.length - 1].x) > w / 2) { subpaths.push(cur); cur = []; }
+            cur.push(p);
+          }
+          subpaths.push(cur);
           g.beginPath();
-          for (let i = 0; i < ring.length; i++) { const p = P(ring[i][0], ring[i][1]); if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y); }
-          g.closePath(); g.fill(); g.stroke();
+          for (const sp of subpaths) {
+            if (sp.length < 2) continue;
+            sp.forEach((p, i) => (i ? g.lineTo(p.x, p.y) : g.moveTo(p.x, p.y)));
+            g.closePath();
+          }
+          g.fill(); g.stroke();
         }
       }
     }
     g.globalAlpha = 1;
 
-    // night hemisphere over everything drawn so far
+    // night hemisphere drawn as per-longitude quads (wrap-safe, no giant polygon
+    // that could fold over itself when panned)
     const now = this.date || new Date();
     const { decl, lon: subLon } = subsolarPoint(now);
     const dRad = (decl * Math.PI) / 180;
+    const tDen = Math.tan(dRad) || 1e-9;
+    const termLat = (lon) => {
+      const hAngle = ((lon - subLon) * Math.PI) / 180;
+      const t = Math.atan(-Math.cos(hAngle) / tDen) / (Math.PI / 180);
+      return Number.isFinite(t) ? t : (decl > 0 ? 90 : -90);
+    };
+    const nightPole = decl > 0 ? -90 : 90;
     g.fillStyle = 'rgba(3, 7, 18, 0.42)';
     g.beginPath();
-    const closeSouth = decl > 0;
     const steps = 120;
-    let started = false;
-    for (let i = 0; i <= steps; i++) {
-      const lon = -180 + (360 * i) / steps;
-      const hAngle = ((lon - subLon) * Math.PI) / 180;
-      const lat = Math.atan(-Math.cos(hAngle) / Math.tan(dRad)) / (Math.PI / 180);
-      const p = P(lon, lat);
-      if (!started) { g.moveTo(p.x, p.y); started = true; } else g.lineTo(p.x, p.y);
+    for (let i = 0; i < steps; i++) {
+      const lon1 = -180 + (360 * i) / steps;
+      const lon2 = -180 + (360 * (i + 1)) / steps;
+      const a = P(lon1, termLat(lon1)); const b = P(lon2, termLat(lon2));
+      const c = P(lon2, nightPole); const d = P(lon1, nightPole);
+      g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.lineTo(c.x, c.y); g.lineTo(d.x, d.y); g.closePath();
     }
-    const pole1 = P(180, closeSouth ? -90 : 90); const pole2 = P(-180, closeSouth ? -90 : 90);
-    g.lineTo(pole1.x, pole1.y); g.lineTo(pole2.x, pole2.y);
-    g.closePath(); g.fill();
+    g.fill();
 
     // graticule
     g.strokeStyle = CVAR('--line'); g.globalAlpha = 0.5; g.lineWidth = 1;
