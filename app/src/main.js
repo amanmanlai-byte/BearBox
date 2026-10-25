@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { AppService } = require('./backend/service');
 const { isWindowsAdmin } = require('./backend/core');
-const { assessPurity } = require('./backend/geo');
+const { assessPurity, lookupPurity } = require('./backend/geo');
 
 if (process.env.JIAJIA_NOSANDBOX) app.commandLine.appendSwitch('no-sandbox');
 if (process.env.JIAJIA_USERDATA) app.setPath('userData', process.env.JIAJIA_USERDATA);
@@ -187,7 +187,17 @@ const handlers = {
     const out = {};
     await Promise.all(servers.map(async (server) => {
       const g = await svc.geo.locate(server).catch((e) => ({ error: e.message }));
-      if (!g.error && g.latitude != null) g.purity = assessPurity(g); // node-IP purity (user request: not the local IP)
+      if (!g.error && g.ip) {
+        // real purity from ip.net.coffee; fall back to keyword heuristic if unreachable
+        try {
+          const proxy = svc.core.state === 'running' ? { host: '127.0.0.1', port: Number(svc.d.settings.mixedPort) } : null;
+          g.purity = await lookupPurity(g.ip, { proxy });
+        } catch (e) {
+          g.purity = assessPurity(g);
+          g.purity.fallback = true;
+          g.purity.fallbackReason = e.message;
+        }
+      }
       out[server] = g;
     }));
     return out;

@@ -518,23 +518,35 @@ PAGES.conns = () => {
 
 function purityDetail(g, pu) {
   if (!pu) return;
-  const rows = [
+  const isReal = pu.source === 'ip.net.coffee';
+  const rows = isReal ? [
+    ['被检测 IP', g && g.ip || '-'],
+    ['数据来源', pu.fallback ? `ip.net.coffee 不可达，降级为关键词推断（${pu.fallbackReason || ''}）` : 'ip.net.coffee（真实风控数据库）'],
+    ['信任分', pu.trustScore != null ? `${pu.trustScore} / 100` : String(pu.score)],
+    ['IP 类型', pu.type || '-'],
+    ['所属组织', pu.company || '-'],
+    ['ASN', pu.asn ? 'AS' + pu.asn : '-'],
+    ['风险标记', pu.flags && pu.flags.length ? pu.flags.join('、') : '（无）'],
+    ['Reddit 封锁', pu.redditBlocked ? '是' : '否'],
+    pu.aiVerdict ? ['AI 判定', `${pu.aiVerdict.label}（置信度 ${pu.aiVerdict.confidence}%）— ${pu.aiVerdict.reasoning}`] : null,
+  ].filter(Boolean) : [
     ['被检测 IP', g && g.ip || '-'],
     ['国家/地区', [g && g.country, g && g.city].filter(Boolean).join(' · ') || '-'],
-    ['ISP', pu.isp || '-'],
-    ['ASN 组织', [pu.asnOrg, pu.asn ? 'AS' + pu.asn : null].filter(Boolean).join(' · ') || '-'],
-    ['命中关键词', pu.hits && pu.hits.length ? pu.hits.join('、') : '（无命中，无法归类）'],
+    ['ISP', pu.isp || pu.company || '-'],
+    ['ASN 组织', pu.asnOrg || '-'],
+    ['命中关键词', pu.hits && pu.hits.length ? pu.hits.join('、') : '（无命中）'],
     ['评分', `${pu.score}（${pu.level}）`],
   ];
-  modal(`IP 纯净度详情`, h('div', {},
+  modal('IP 纯净度详情', h('div', {},
     h('div', { class: 'toolbar', style: { marginBottom: '14px' } },
       h('span', { class: 'purity ' + (pu.score >= 85 ? 'good' : pu.score >= 60 ? 'mid' : 'bad'), style: { display: 'inline-flex' } },
-        h('b', { class: 'purity-score' }, String(pu.score)), h('span', { class: 'purity-label' }, pu.level))),
-    h('table', { class: 'tbl' }, h('tbody', {}, rows.map(([k, v]) => h('tr', {}, h('td', { style: { width: '120px', color: 'var(--ink-3)' } }, k), h('td', { class: 'mono', style: { fontSize: '11.5px' } }, v))))),
+        h('b', { class: 'purity-score' }, String(pu.score)), h('span', { class: 'purity-label' }, pu.level)),
+      isReal && !pu.fallback ? h('span', { class: 'tag ok', style: { marginLeft: '8px' } }, '真实风控数据') : h('span', { class: 'tag warn', style: { marginLeft: '8px' } }, '推断')),
+    h('table', { class: 'tbl' }, h('tbody', {}, rows.map(([k, v]) => h('tr', {}, h('td', { style: { width: '120px', color: 'var(--ink-3)' } }, k), h('td', { class: 'mono', style: { fontSize: '11.5px' } }, String(v))))),
     h('div', { class: 'note', style: { marginTop: '12px' } },
-      pu.note, h('br'),
-      '评分规则：ISP/ASN 含机房/云商关键词 → 40 分（机房）；含运营商关键词 → 95 分（住宅）；两者皆无 → 72 分（一般）。', h('br'),
-      '你可以在浏览器打开 https://ip.sb/', g && g.ip ? '/' + g.ip : '', ' 自行查证此 IP 的归属信息。')),
+      isReal ? '数据来自 ip.net.coffee 真实风控数据库。' : '基于 ip.sb 的 ISP/ASN 归属关键词推断，非商业风控数据库评分。', h('br'),
+      isReal ? '可在 ip.net.coffee/ip/' + (g && g.ip || '') + ' 自行查证。' : '可在 ip.sb/' + (g && g.ip || '') + ' 自行查证。')),
+    ),
     (close) => [h('button', { class: 'btn primary', onclick: close }, '知道了')]);
 }
 

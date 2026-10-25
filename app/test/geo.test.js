@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs'); const os = require('os'); const path = require('path');
-const { GeoService, resolveHost, assessPurity } = require('../src/backend/geo');
+const { GeoService, resolveHost, assessPurity, lookupPurity } = require('../src/backend/geo');
 
 const GEO = { ip: '1.2.3.4', country: 'Japan', country_code: 'JP', region: 'Tokyo', city: 'Tokyo', isp: 'Amazon', asn: 16509, latitude: 35.6, longitude: 139.7 };
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jj-geo-'));
@@ -99,4 +99,56 @@ test('self() carries the purity assessment', async () => {
   const svc = new GeoService({ userData: tmp(), getProxy: () => null, transports: t.transports });
   const g = await svc.self();
   assert.ok(g.purity && Number.isFinite(g.purity.score));
+});
+
+test('lookupPurity fetches from ip.net.coffee and maps risk flags', async () => {
+  const calls = { direct: [], proxy: [] };
+  const mockResp = {
+    ip: '8.8.8.8', trust_score: 63, is_datacenter: true, isResidential: false,
+    is_vpn: false, is_proxy: false, is_tor: false, is_abuser: false, is_crawler: false,
+    is_mobile: false, company_type: 'hosting', company_name: 'Google LLC',
+    asn: 15169, asOrganization: 'Google LLC', reddit_blocked: false,
+    ai_verdict: { label: '公共 DNS 任播', confidence: 100, reasoning: 'test' },
+  };
+  const t = {
+    viaProxy: async (h, p) => { calls.proxy.push([h, p]); throw new Error('no proxy'); },
+    direct: async (h, p) => { calls.direct.push([h, p]); return JSON.stringify(mockResp); },
+  };
+  const r = await lookupPurity('8.8.8.8', { transports: t });
+  assert.equal(calls.direct[0][0], 'ip.net.coffee');
+  assert.equal(calls.direct[0][1], '/api/ip/lookup/8.8.8.8');
+  assert.equal(r.score, 63); // trust_score used directly
+  assert.equal(r.level, '机房');
+  assert.equal(r.type, '机房/云商');
+  assert.equal(r.company, 'Google LLC');
+  assert.equal(r.source, 'ip.net.coffee');
+  assert.ok(r.aiVerdict);
+  assert.equal(r.aiVerdict.confidence, 100);
+});
+
+test('lookupPurity maps VPN/Tor/abuser flags to 风险 level', async () => {
+  const mockResp = {
+    ip: 'x', trust_score: 25, is_vpn: true, is_proxy: true, is_tor: false,
+    is_abuser: true, is_datacenter: true, isResidential: false, is_crawler: false,
+    is_mobile: false, company_type: 'hosting', company_name: 'Some VPN Provider',
+  };
+  const t = { viaProxy: async () => { throw new Error('no'); }, direct: async () => JSON.stringify(mockResp) };
+  const r = await lookupPurity('1.2.3.4', { transports: t });
+  assert.equal(r.level, '风险');
+  assert.ok(r.flags.includes('VPN'));
+  assert.ok(r.flags.includes('代理'));
+  assert.ok(r.flags.includes('历史滥用记录'));
+});
+
+test('lookupPurity falls back to direct when proxy fails', async () => {
+  const mockResp = { ip: 'x', trust_score: 90, isResidential: true, is_vpn: false, is_proxy: false, is_tor: false, is_abuser: false, is_crawler: false, is_datacenter: false, is_mobile: false, company_type: 'isp' };
+  const calls = { d: 0 };
+  const t = {
+    viaProxy: async () => { throw new Error('proxy down'); },
+    direct: async () => { calls.d++; return JSON.stringify(mockResp); },
+  };
+  const r = await lookupPurity('5.6.7.8', { proxy: { host: 'x', port: 1 }, transports: t });
+  assert.equal(calls.d, 1);
+  assert.equal(r.score, 90);
+  assert.equal(r.level, '纯净');
 });

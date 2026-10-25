@@ -141,6 +141,55 @@ function assessPurity(geo) {
   };
 }
 
+const IP_COFFEE_HOST = 'ip.net.coffee';
+
+/**
+ * Real IP purity/risk lookup via ip.net.coffee (the user's requested API).
+ * Returns trust_score (0-100, higher = better), risk flags (vpn/proxy/tor/abuser/
+ * datacenter/residential/mobile/crawler), company info, and an AI verdict.
+ * Falls back to the keyword heuristic if the API is unreachable.
+ */
+async function lookupPurity(ip, { proxy = null, transports = null, timeoutMs = 12000 } = {}) {
+  const t = transports || { viaProxy: httpsViaProxy, direct: httpsDirect };
+  const path = `/api/ip/lookup/${encodeURIComponent(ip)}`;
+  let raw;
+  if (proxy) {
+    try { raw = await t.viaProxy(IP_COFFEE_HOST, path, proxy.host, proxy.port, timeoutMs); }
+    catch (e) { raw = await t.direct(IP_COFFEE_HOST, path, timeoutMs); }
+  } else raw = await t.direct(IP_COFFEE_HOST, path, timeoutMs);
+  const j = JSON.parse(raw);
+  if (!j || typeof j !== 'object') throw new Error('ip.net.coffee 返回无效数据');
+  const flags = [];
+  if (j.is_tor) flags.push('Tor 出口节点');
+  if (j.is_vpn) flags.push('VPN');
+  if (j.is_proxy) flags.push('代理');
+  if (j.is_abuser) flags.push('历史滥用记录');
+  if (j.is_crawler) flags.push('爬虫标记');
+  const type = j.is_datacenter ? '机房/云商' : j.isResidential ? '住宅' : j.is_mobile ? '移动蜂窝' : j.company_type || '未知';
+  let score = typeof j.trust_score === 'number' ? j.trust_score : null;
+  if (score == null) {
+    // derive from flags if trust_score is missing
+    score = 80;
+    if (j.is_datacenter) score -= 25;
+    if (j.is_vpn || j.is_proxy) score -= 30;
+    if (j.is_tor) score -= 40;
+    if (j.is_abuser) score -= 20;
+    score = Math.max(0, Math.min(100, score));
+  }
+  const level = flags.length > 0 ? '风险' : type === '住宅' ? '纯净' : type.includes('机房') ? '机房' : '一般';
+  return {
+    score, level, flags, type,
+    company: j.company_name || j.asOrganization || '',
+    asn: j.asn || null,
+    trustScore: j.trust_score,
+    redditBlocked: j.reddit_blocked === true,
+    aiVerdict: j.ai_verdict ? { label: j.ai_verdict.label, confidence: j.ai_verdict.confidence, reasoning: j.ai_verdict.reasoning } : null,
+    rawData: { is_datacenter: j.is_datacenter, isResidential: j.isResidential, is_vpn: j.is_vpn, is_proxy: j.is_proxy, is_tor: j.is_tor, is_abuser: j.is_abuser, is_mobile: j.is_mobile, is_crawler: j.is_crawler, company_type: j.company_type },
+    source: 'ip.net.coffee',
+    note: '来自 ip.net.coffee 真实风控数据库，非关键词推断',
+  };
+}
+
 class GeoService {
   constructor({ userData, getProxy = () => null, transports = null, now = () => Date.now() }) {
     this.cacheFile = path.join(userData, 'geo-cache.json');
@@ -205,4 +254,4 @@ class GeoService {
   }
 }
 
-module.exports = { GeoService, resolveHost, assessPurity, httpsViaProxy, httpsDirect, dechunk };
+module.exports = { GeoService, resolveHost, assessPurity, lookupPurity, httpsViaProxy, httpsDirect, dechunk };
