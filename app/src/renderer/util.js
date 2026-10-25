@@ -129,8 +129,31 @@ function nodeFlag(name) {
   if (m) { const up = m[0].toUpperCase(); for (const pair of FLAG_CODE) { if (pair[0] === up) return pair[1]; } }
   return '';
 }
-// Node display name: flag prefix + original tag (the original is never modified).
-function nodeDisplayName(tag) { const f = nodeFlag(tag); return f ? f + ' ' + tag : tag; }
+// Node display name: replace a leading country code with the flag emoji; prepend the
+// flag when a Chinese country name is found. DISPLAY ONLY - the underlying tag never changes.
+function nodeDisplayName(tag) {
+  if (!tag) return tag;
+  if (/\u{1F1E6}-\u{1F1FF}/u.test(tag)) return tag; // already has a flag
+  // 1. Chinese country name anywhere: use its flag; also strip a redundant leading code
+  for (const pair of FLAG_CN) {
+    if (tag.includes(pair[0])) {
+      const stripped = tag.replace(/^[A-Za-z]{2}(?=[\u4e00-\u9fff\d\s\-_·])/, '');
+      return pair[1] + ' ' + (stripped || tag);
+    }
+  }
+  // 2. Country code at the start: replace it with the flag
+  const m = /^[A-Za-z]{2}(?=[\d\s\-_·]|$)/.exec(tag.trim());
+  if (m) {
+    const up = m[0].toUpperCase();
+    for (const pair of FLAG_CODE) {
+      if (pair[0] === up) {
+        const rest = tag.trim().slice(m[0].length).replace(/^[\s\-_·]+/, '');
+        return pair[1] + ' ' + (rest || tag);
+      }
+    }
+  }
+  return tag;
+}
 
 /**
  * Preserve the focused input across a full page re-render.
