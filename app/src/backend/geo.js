@@ -1,26 +1,26 @@
 'use strict';
-// IP geolocation via ip.sb (https://api.ip.sb/geoip). When the core is running,
-// requests go through the local mixed proxy (HTTP CONNECT + TLS) so the "self"
-// lookup reflects the proxy exit; otherwise they go direct. Results are cached
-// on disk (30 days) so the API is never hammered.
+// IP geolocation via ip.sb (https://api.ip.sb/geoip) and DNS-over-HTTPS fallback.
+// When the core is running, requests go through the local mixed proxy (HTTP CONNECT + TLS)
+// so the "self" lookup reflects the proxy exit; otherwise they go direct. Geo results are
+// cached on disk (30 days) so the API is never hammered.
 const fs = require('fs');
 const path = require('path');
 const net = require('net');
 const tls = require('tls');
 const dns = require('dns');
 
-const HOST = 'api.ip.sb';
+const GEO_HOST = 'api.ip.sb';
 const CACHE_TTL = 30 * 24 * 3600 * 1000;
 
 /** Minimal HTTPS GET through an HTTP proxy via CONNECT. Returns the body string. */
-function httpsViaProxy(reqPath, proxyHost, proxyPort, timeoutMs = 12000) {
+function httpsViaProxy(host, reqPath, proxyHost, proxyPort, timeoutMs = 12000) {
   return new Promise((resolve, reject) => {
     const sock = net.connect({ host: proxyHost, port: proxyPort });
     sock.setTimeout(timeoutMs);
     const fail = (e) => { sock.destroy(); reject(e); };
     sock.once('error', fail); sock.once('timeout', () => fail(new Error('代理连接超时')));
     sock.once('connect', () => {
-      sock.write(`CONNECT ${HOST}:443 HTTP/1.1\r\nHost: ${HOST}:443\r\n\r\n`);
+      sock.write(`CONNECT ${host}:443 HTTP/1.1\r\nHost: ${host}:443\r\n\r\n`);
       let head = '';
       const onData = (d) => {
         head += d.toString('latin1');
@@ -28,8 +28,8 @@ function httpsViaProxy(reqPath, proxyHost, proxyPort, timeoutMs = 12000) {
         if (idx < 0) return;
         sock.removeListener('data', onData);
         if (!/^HTTP\/1\.[01] 200/.test(head)) return fail(new Error('代理拒绝 CONNECT: ' + head.split('\r\n')[0]));
-        const tlsSock = tls.connect({ socket: sock, servername: HOST }, () => {
-          tlsSock.write(`GET ${reqPath} HTTP/1.1\r\nHost: ${HOST}\r\nUser-Agent: JiajiaBox/0.3\r\nAccept: application/json\r\nConnection: close\r\n\r\n`);
+        const tlsSock = tls.connect({ socket: sock, servername: host }, () => {
+          tlsSock.write(`GET ${reqPath} HTTP/1.1\r\nHost: ${host}\r\nUser-Agent: JiajiaBox/0.4\r\nAccept: application/json\r\nConnection: close\r\n\r\n`);
           let body = ''; let headers = ''; let headerDone = false;
           tlsSock.on('data', (chunk) => {
             if (!headerDone) {
@@ -43,9 +43,9 @@ function httpsViaProxy(reqPath, proxyHost, proxyPort, timeoutMs = 12000) {
           tlsSock.once('close', () => {
             const m = /content-length:\s*(\d+)/i.exec(headers);
             let out = body;
-            if (m) { const len = +m[1]; const buf = Buffer.from(body, 'utf8'); out = buf.slice(0, len).toString('utf8'); }
+            if (m) { const len = +m[1]; out = Buffer.from(body, 'utf8').slice(0, len).toString('utf8'); }
             else if (/transfer-encoding:\s*chunked/i.test(headers)) out = dechunk(body);
-            if (/^2\d\d/.test(headers.split('\r\n')[0] || '')) resolve(out); else reject(new Error('HTTP 错误: ' + headers.split('\r\n')[0]));
+            if (/^2\d\d/.test((headers.split('\r\n')[0] || '').trim())) resolve(out); else reject(new Error('HTTP 错误: ' + headers.split('\r\n')[0]));
           });
           tlsSock.once('error', fail);
         });
@@ -68,27 +68,56 @@ function dechunk(body) {
   return out;
 }
 
-async function httpsDirect(reqPath, timeoutMs = 10000) {
-  const res = await fetch(`https://${HOST}${reqPath}`, { headers: { 'User-Agent': 'JiajiaBox/0.3', Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
+async function httpsDirect(host, reqPath, timeoutMs = 10000) {
+  const res = await fetch(`https://${host}${reqPath}`, { headers: { 'User-Agent': 'JiajiaBox/0.4', Accept: 'application/json' }, signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.text();
 }
 
-/** Resolve a hostname to an IPv4 (direct DNS). Returns null on failure or for non-hosts. */
-async function resolveHost(host, timeoutMs = 4000) {
+const isIpLiteral = (host) => /^[\d.]+$/.test(host) || String(host || '').includes(':');
+
+/**
+ * Resolve a hostname to an IPv4. Order: system DNS, then DoH (Cloudflare through the
+ * proxy when the core runs / direct otherwise, then AliDNS direct). CN DNS commonly
+ * NXDOMAINs proxy-server domains, which is exactly why the DoH fallback exists.
+ */
+async function resolveHost(host, { proxy = null, transports = null, timeoutMs = 4000 } = {}) {
   if (!host) return null;
-  if (/^[\d.]+$/.test(host) || host.includes(':')) return host;
+  if (isIpLiteral(host)) return host;
+  const t = transports || { viaProxy: httpsViaProxy, direct: httpsDirect };
+  const tryGet = async (url, viaProxy) => {
+    const u = new URL(url);
+    const raw = viaProxy && proxy
+      ? await t.viaProxy(u.hostname, u.pathname + u.search, proxy.host, proxy.port, timeoutMs + 4000)
+      : await t.direct(u.hostname, u.pathname + u.search, timeoutMs);
+    const j = JSON.parse(raw);
+    const a = (j.Answer || []).find((r) => r.type === 1);
+    return a ? String(rdataIp(a.data)) : null;
+  };
+  const rdataIp = (data) => {
+    const m = /(\d+\.\d+\.\d+\.\d+)/.exec(String(data)); // DoH answers may be "xx.xx.xx.xx.in-addr..." escaped or plain
+    return m ? m[1] : null;
+  };
+  // 1. system DNS
   try {
     const r = await Promise.race([dns.promises.resolve4(host), new Promise((_, rej) => setTimeout(() => rej(new Error('DNS 超时')), timeoutMs))]);
-    return r && r[0] ? r[0] : null;
-  } catch { return null; }
+    if (r && r[0]) return r[0];
+  } catch { /* fall through */ }
+  // 2. DoH: cloudflare (via proxy if possible, else direct), then alidns direct
+  for (const [url, via] of [['https://cloudflare-dns.com/dns-query', true], ['https://223.5.5.5/resolve', false]]) {
+    try {
+      const ip = await tryGet(`${url}?name=${encodeURIComponent(host)}&type=A`, via);
+      if (ip) return ip;
+    } catch { /* next */ }
+  }
+  return null;
 }
 
 class GeoService {
   constructor({ userData, getProxy = () => null, transports = null, now = () => Date.now() }) {
     this.cacheFile = path.join(userData, 'geo-cache.json');
     this.getProxy = getProxy;
-    this.t = transports || { viaProxy: httpsViaProxy, direct: httpsDirect };
+    this.t = transports || { viaProxy: (host, p, ph, pp, tm) => httpsViaProxy(host, p, ph, pp, tm), direct: (host, p, tm) => httpsDirect(host, p, tm) };
     this.now = now;
     this.cache = null; this._flushT = null; this._queue = Promise.resolve();
   }
@@ -110,9 +139,9 @@ class GeoService {
     const proxy = forceDirect ? null : this.getProxy();
     let raw;
     if (proxy) {
-      try { raw = await this.t.viaProxy(reqPath, proxy.host, proxy.port); }
-      catch (e) { raw = await this.t.direct(reqPath); } // proxy path failed: fall back to direct
-    } else raw = await this.t.direct(reqPath);
+      try { raw = await this.t.viaProxy(GEO_HOST, reqPath, proxy.host, proxy.port); }
+      catch (e) { raw = await this.t.direct(GEO_HOST, reqPath); } // proxy path failed: fall back to direct
+    } else raw = await this.t.direct(GEO_HOST, reqPath);
     const j = JSON.parse(raw);
     if (!j || typeof j.latitude !== 'number' || typeof j.longitude !== 'number') throw new Error('返回数据缺少坐标');
     return { ip: j.ip, country: j.country, country_code: j.country_code, region: j.region, city: j.city, isp: j.isp || j.organization, asn: j.asn, latitude: j.latitude, longitude: j.longitude };
@@ -133,10 +162,18 @@ class GeoService {
     return task;
   }
 
-  /** Self lookup (no ip = whatever the request egress is). Not cached. direct=true forces the direct path. */
+  /** Self lookup (no ip = whatever the request egress is). direct=true forces the direct path. */
   async self({ direct = false } = {}) {
     const geo = await this._fetchJson('/geoip', { forceDirect: direct });
     return { ...geo, viaProxy: !direct && !!this.getProxy() };
+  }
+
+  /** Resolve + locate a hostname (node servers). proxy comes from getProxy(). */
+  async locate(host) {
+    const proxy = this.getProxy();
+    const ip = await resolveHost(host, { proxy });
+    if (!ip) return { error: '域名解析失败（系统 DNS 与 DoH 均未返回结果）' };
+    try { return { ip, ...(await this.lookup(ip)) }; } catch (e) { return { ip, error: e.message }; }
   }
 }
 

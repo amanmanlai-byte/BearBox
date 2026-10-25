@@ -30,6 +30,8 @@ const DEFAULT_SETTINGS = {
   wallpaperOpacity: 0.35,      // how strong the wallpaper shows (0.1-1)
   wallpaperVeil: 0.55,         // theme-colored veil over the wallpaper; higher = calmer/brighter match
   wallpaperBlur: 0,            // px blur applied to the wallpaper
+  glassEnabled: false,         // frosted glass effect on cards/sidebar
+  glassOpacity: 0.6,           // card background opacity under the glass effect (text stays solid)
 };
 
 function parseDnsAddress(addr, tag, extra = {}) {
@@ -78,8 +80,7 @@ function userRuleToSingBox(r) {
   return { rule, warns };
 }
 
-/** Human readable description of one generated route rule, for the "effective rules" UI. Pure. */
-function describeRule(rule, i) {
+/** Human readable description of one generated route rule, for the "effective rules" UI. Pure. */function describeRule(rule, i) {
   if (rule.action === 'sniff') return { index: i, match: '全部入站流量', outbound: '嗅探（识别真实协议与域名）', raw: rule };
   if (rule.action === 'hijack-dns') return { index: i, match: 'DNS 请求', outbound: '劫持到内核 DNS', raw: rule };
   const cond = [];
@@ -177,4 +178,59 @@ function buildConfig({ nodes, selectedTag, settings = {}, userRules = [], secret
   return { config, warnings, selected: sel, routePreview };
 }
 
-module.exports = { buildConfig, DEFAULT_SETTINGS, parseDnsAddress, userRuleToSingBox, describeRule };
+/**
+ * Parse a rules file into our rule model. Two formats:
+ *  - JSON array of rule objects (as exported by this app)
+ *  - Clash-style rule lines: TYPE,payload[,policy]  e.g. DOMAIN-SUFFIX,example.com,DIRECT
+ * Pure function; unsupported types are skipped with a warning, never silently dropped.
+ */
+function parseRuleFile(text) {
+  const rules = []; const warnings = []; let skipped = 0;
+  const POLICY = { DIRECT: 'direct', REJECT: 'block', 'REJECT-DROP': 'block', PROXY: 'proxy', 代理: 'proxy', 直连: 'direct', 拦截: 'block' };
+  const add = (r) => { if (!rules.some((x) => JSON.stringify(x) === JSON.stringify(r))) rules.push(r); };
+  const raw = String(text || '').replace(/^\uFEFF/, '').trim();
+  if (!raw) return { rules, warnings: ['文件为空'], skipped };
+  if (raw.startsWith('[') || raw.startsWith('{')) {
+    let j = null;
+    try { j = JSON.parse(raw); } catch { return { rules, warnings: ['JSON 解析失败'], skipped }; }
+    const arr = Array.isArray(j) ? j : j.rules;
+    if (!Array.isArray(arr)) return { rules, warnings: ['JSON 中没有规则数组（rules）'], skipped };
+    for (const r of arr) {
+      if (r && typeof r === 'object' && (r.domain || r.ip || r.port || r.processName || r.protocol || r.sourceIp)) {
+        add({ name: r.name || '导入规则', enabled: r.enabled !== false, domain: r.domain || '', ip: r.ip || '', port: r.port || '', sourceIp: r.sourceIp || '', sourcePort: r.sourcePort || '', processName: r.processName || '', network: r.network || 'any', protocol: r.protocol || '', outbound: r.outbound || 'proxy' });
+      } else skipped++;
+    }
+    return { rules, warnings, skipped };
+  }
+  // Clash rule lines
+  const TYPE_MAP = {
+    'DOMAIN-SUFFIX': (p) => ({ domain: p }),
+    DOMAIN: (p) => ({ domain: 'full:' + p }),
+    'DOMAIN-KEYWORD': (p) => ({ domain: 'keyword:' + p }),
+    'DOMAIN-REGEX': (p) => ({ domain: 'regexp:' + p }),
+    'IP-CIDR': (p) => ({ ip: p }),
+    'IP-CIDR6': (p) => ({ ip: p }),
+    'SRC-IP-CIDR': (p) => ({ sourceIp: p }),
+    'SRC-PORT': (p) => ({ sourcePort: p }),
+    PORT: (p) => ({ port: p }),
+    'PROCESS-NAME': (p) => ({ processName: p }),
+    NETWORK: (p) => ({ network: p.toLowerCase() }),
+  };
+  for (const line of raw.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s || s.startsWith('#') || s.startsWith('//')) continue;
+    const parts = s.split(',').map((x) => x.trim());
+    const type = parts[0].toUpperCase();
+    if (type === 'MATCH') { skipped++; continue; }
+    if (type === 'GEOIP' || type === 'GEOSITE' || type === 'RULE-SET') { skipped++; warnings.push(`跳过 ${s}（${type} 由内置规则或规则集处理）`); continue; }
+    const mapper = TYPE_MAP[type];
+    if (!mapper) { skipped++; warnings.push(`跳过 ${s}（不支持的规则类型 ${parts[0]}）`); continue; }
+    const cond = mapper(parts[1] || '');
+    if (!parts[1]) { skipped++; continue; }
+    const policy = POLICY[(parts[2] || 'PROXY').toUpperCase()] || 'proxy';
+    add({ name: `${type} ${parts[1]}`, enabled: true, outbound: policy, network: 'any', ...cond });
+  }
+  return { rules, warnings, skipped };
+}
+
+module.exports = { buildConfig, DEFAULT_SETTINGS, parseDnsAddress, userRuleToSingBox, describeRule, parseRuleFile };

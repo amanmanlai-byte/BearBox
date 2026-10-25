@@ -212,7 +212,7 @@ function drawSpark(canvas, values, { color = '--down', fill = true } = {}) {
   g.beginPath(); g.arc(lastP.x, lastP.y, 2.4, 0, Math.PI * 2); g.fillStyle = stroke; g.fill();
 }
 
-// ---------------- world map with day/night terminator ----------------
+// ---------------- interactive world map with day/night terminator ----------------
 
 /** Sub-solar point for a given Date (declination + longitude), good to ~1 degree. */
 function subsolarPoint(date) {
@@ -224,87 +224,143 @@ function subsolarPoint(date) {
   return { decl, lon: ((lon + 540) % 360) - 180 };
 }
 
+const COUNTRY_PALETTE = ['#8fbf7f', '#c9a86a', '#7fa8c9', '#c98fa8', '#a8c97f', '#9f8fc9', '#6fbdb3', '#c9876f', '#b5bd7a', '#7f9fc9'];
+function countryColor(code) {
+  let h = 0; for (let i = 0; i < code.length; i++) h = (h * 31 + code.charCodeAt(i)) >>> 0;
+  return COUNTRY_PALETTE[h % COUNTRY_PALETTE.length];
+}
+
 /**
- * Draw an equirectangular world map with a real-time day/night terminator.
- * world: GeoJSON FeatureCollection. opts.markers = [{lon,lat,color,r,label,pulse}],
- * opts.arcs = [{from:{lon,lat}, to:{lon,lat}, color, width}] (great-circle-ish quadratic).
+ * Interactive equirectangular world map: colored countries, real-time day/night
+ * terminator, markers/arcs, wheel zoom (anchored at the cursor) and drag panning.
+ * scale 1 fits the whole 360°; zoom range is huge (up to 64x).
  */
-function drawWorldMap(canvas, world, opts = {}) {
-  const { g, w, h: H } = prep(canvas);
-  const PX = (lon) => ((lon + 180) / 360) * w;
-  const PY = (lat) => ((90 - lat) / 180) * H;
+class WorldMap {
+  constructor(canvas, world) {
+    this.canvas = canvas; this.world = world;
+    this.view = { cx: 20, cy: 28, scale: 1.15 };
+    this.minScale = 0.55; this.maxScale = 64;
+    this.markers = []; this.arcs = []; this.date = null;
+    canvas.style.cursor = 'grab';
+    canvas.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const r = canvas.getBoundingClientRect(); const mx = e.clientX - r.left; const my = e.clientY - r.top;
+      const before = this.unproject(mx, my);
+      this.view.scale = Math.min(this.maxScale, Math.max(this.minScale, this.view.scale * (e.deltaY < 0 ? 1.18 : 1 / 1.18)));
+      const after = this.unproject(mx, my);
+      this.view.cx += before.lon - after.lon; this.view.cy += before.lat - after.lat;
+      this.clampView(); this.draw();
+    }, { passive: false });
+    let drag = null;
+    canvas.addEventListener('pointerdown', (e) => { drag = { x: e.clientX, y: e.clientY, cx: this.view.cx, cy: this.view.cy }; canvas.setPointerCapture(e.pointerId); canvas.style.cursor = 'grabbing'; });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const { w } = this.size(); const ppd = (w / 360) * this.view.scale;
+      this.view.cx = drag.cx - (e.clientX - drag.x) / ppd;
+      this.view.cy = drag.cy + (e.clientY - drag.y) / ppd;
+      this.clampView(); this.draw();
+    });
+    const up = () => { drag = null; canvas.style.cursor = 'grab'; };
+    canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up);
+  }
+  size() { return { w: this.canvas.clientWidth || 1, h: this.canvas.clientHeight || 1 }; }
+  project(lon, lat) { const { w, h } = this.size(); const ppd = (w / 360) * this.view.scale; return { x: w / 2 + (((lon - this.view.cx + 540) % 360) - 180) * ppd, y: h / 2 - (lat - this.view.cy) * ppd }; }
+  unproject(x, y) { const { w, h } = this.size(); const ppd = (w / 360) * this.view.scale; return { lon: this.view.cx + (x - w / 2) / ppd, lat: this.view.cy - (y - h / 2) / ppd }; }
+  clampView() { this.view.cx = ((this.view.cx + 540) % 360) - 180; this.view.cy = Math.max(-78, Math.min(78, this.view.cy)); }
+  setData({ markers, arcs, date } = {}) {
+    if (markers) this.markers = markers;
+    if (arcs) this.arcs = arcs;
+    if (date) this.date = date;
+    this.draw();
+  }
+  zoomBy(f) { this.view.scale = Math.min(this.maxScale, Math.max(this.minScale, this.view.scale * f)); this.draw(); }
+  resetView() { this.view = { cx: 20, cy: 28, scale: 1.15 }; this.draw(); }
 
-  // ocean
-  g.fillStyle = CVAR('--card-2');
-  g.fillRect(0, 0, w, H);
-  // graticule
-  g.strokeStyle = CVAR('--line-2'); g.lineWidth = 1;
-  for (let lon = -150; lon <= 150; lon += 30) { g.beginPath(); g.moveTo(PX(lon), 0); g.lineTo(PX(lon), H); g.stroke(); }
-  for (let lat = -60; lat <= 60; lat += 30) { g.beginPath(); g.moveTo(0, PY(lat)); g.lineTo(w, PY(lat)); g.stroke(); }
+  draw() {
+    const canvas = this.canvas;
+    const { g, w, h: H } = prep(canvas);
+    const P = (lon, lat) => this.project(lon, lat);
 
-  // land
-  g.fillStyle = CVAR('--ink');
-  g.globalAlpha = 0.10;
-  g.strokeStyle = CVAR('--ink-3'); g.lineWidth = 0.7;
-  for (const f of world.features || []) {
-    const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates : [];
-    for (const poly of polys) {
-      for (const ring of poly) {
-        if (!ring.length) continue;
-        g.beginPath();
-        for (let i = 0; i < ring.length; i++) { const x = PX(ring[i][0]); const y = PY(ring[i][1]); if (i === 0) g.moveTo(x, y); else g.lineTo(x, y); }
-        g.closePath(); g.fill(); g.globalAlpha = 0.28; g.stroke(); g.globalAlpha = 0.10;
+    // ocean
+    g.fillStyle = CVAR('--card-2');
+    g.fillRect(0, 0, w, H);
+
+    // land: colored countries
+    g.lineWidth = 1;
+    for (const f of this.world.features || []) {
+      const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.type === 'MultiPolygon' ? f.geometry.coordinates : [];
+      g.fillStyle = countryColor(String(f.id || f.properties && f.properties.name || 'X'));
+      g.globalAlpha = document.documentElement.dataset.theme === 'dark' ? 0.55 : 0.85;
+      g.strokeStyle = document.documentElement.dataset.theme === 'dark' ? 'rgba(0,0,0,0.35)' : 'rgba(255,255,255,0.55)';
+      for (const poly of polys) {
+        for (const ring of poly) {
+          if (!ring.length) continue;
+          g.beginPath();
+          for (let i = 0; i < ring.length; i++) { const p = P(ring[i][0], ring[i][1]); if (i === 0) g.moveTo(p.x, p.y); else g.lineTo(p.x, p.y); }
+          g.closePath(); g.fill(); g.stroke();
+        }
       }
     }
-  }
-  g.globalAlpha = 1;
+    g.globalAlpha = 1;
 
-  // night hemisphere
-  const now = opts.date || new Date();
-  const { decl, lon: subLon } = subsolarPoint(now);
-  const dRad = (decl * Math.PI) / 180;
-  g.fillStyle = 'rgba(4, 8, 22, 0.45)';
-  g.beginPath();
-  const closeSouth = decl > 0; // night contains the pole opposite the sun's declination
-  const steps = 90;
-  const pts = [];
-  for (let i = 0; i <= steps; i++) {
-    const lon = -180 + (360 * i) / steps;
-    const hAngle = ((lon - subLon) * Math.PI) / 180;
-    const lat = Math.atan(-Math.cos(hAngle) / Math.tan(dRad)) / (Math.PI / 180);
-    pts.push([PX(lon), PY(lat)]);
-  }
-  g.moveTo(pts[0][0], pts[0][1]);
-  for (const p of pts) g.lineTo(p[0], p[1]);
-  const poleY = closeSouth ? H : 0;
-  g.lineTo(w, poleY); g.lineTo(0, poleY);
-  g.closePath(); g.fill();
-
-  // arcs (below markers)
-  for (const a of opts.arcs || []) {
-    const x1 = PX(a.from.lon); const y1 = PY(a.from.lat); const x2 = PX(a.to.lon); const y2 = PY(a.to.lat);
-    const mx = (x1 + x2) / 2; const my = (y1 + y2) / 2 - Math.min(90, Math.hypot(x2 - x1, y2 - y1) * 0.25);
-    g.beginPath(); g.moveTo(x1, y1); g.quadraticCurveTo(mx, my, x2, y2);
-    g.strokeStyle = a.color || CVAR('--accent'); g.lineWidth = a.width || 1.4; g.globalAlpha = a.alpha == null ? 0.75 : a.alpha; g.stroke(); g.globalAlpha = 1;
-  }
-
-  // markers
-  for (const m of opts.markers || []) {
-    const x = PX(m.lon); const y = PY(m.lat); const r = m.r || 4;
-    if (m.pulse) {
-      const t = (Date.now() % 1600) / 1600;
-      g.beginPath(); g.arc(x, y, r + t * 12, 0, Math.PI * 2);
-      g.strokeStyle = m.color; g.globalAlpha = (1 - t) * 0.5; g.lineWidth = 1.5; g.stroke(); g.globalAlpha = 1;
+    // night hemisphere over everything drawn so far
+    const now = this.date || new Date();
+    const { decl, lon: subLon } = subsolarPoint(now);
+    const dRad = (decl * Math.PI) / 180;
+    g.fillStyle = 'rgba(3, 7, 18, 0.42)';
+    g.beginPath();
+    const closeSouth = decl > 0;
+    const steps = 120;
+    let started = false;
+    for (let i = 0; i <= steps; i++) {
+      const lon = -180 + (360 * i) / steps;
+      const hAngle = ((lon - subLon) * Math.PI) / 180;
+      const lat = Math.atan(-Math.cos(hAngle) / Math.tan(dRad)) / (Math.PI / 180);
+      const p = P(lon, lat);
+      if (!started) { g.moveTo(p.x, p.y); started = true; } else g.lineTo(p.x, p.y);
     }
-    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fillStyle = m.color; g.fill();
-    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.strokeStyle = CVAR('--card'); g.lineWidth = 1.5; g.stroke();
-    if (m.label) {
-      g.font = '600 11px ' + CVAR('--font');
-      const tw = g.measureText(m.label).width;
-      const bx = Math.min(Math.max(x + 8, 4), w - tw - 14); const by = Math.max(14, y - 10);
-      g.fillStyle = CVAR('--ink'); roundRect(g, bx - 4, by - 9, tw + 8, 15, 4); g.globalAlpha = 0.85; g.fill(); g.globalAlpha = 1;
-      g.fillStyle = CVAR('--bg'); g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillText(m.label, bx, by - 1);
+    const pole1 = P(180, closeSouth ? -90 : 90); const pole2 = P(-180, closeSouth ? -90 : 90);
+    g.lineTo(pole1.x, pole1.y); g.lineTo(pole2.x, pole2.y);
+    g.closePath(); g.fill();
+
+    // graticule
+    g.strokeStyle = CVAR('--line'); g.globalAlpha = 0.5; g.lineWidth = 1;
+    const ppd = (w / 360) * this.view.scale;
+    const lonStep = ppd > 26 ? 10 : ppd > 8 ? 30 : 90;
+    for (let lon = -180; lon <= 180; lon += lonStep) { const a = P(lon, 90); const b = P(lon, -90); g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke(); }
+    for (let lat = -60; lat <= 60; lat += 30) { const a = P(-180, lat); const b = P(180, lat); g.beginPath(); g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.stroke(); }
+    g.globalAlpha = 1;
+
+    // arcs
+    for (const a of this.arcs) {
+      const p1 = P(a.from.lon, a.from.lat); const p2 = P(a.to.lon, a.to.lat);
+      const mx = (p1.x + p2.x) / 2; const my = (p1.y + p2.y) / 2 - Math.min(90, Math.hypot(p2.x - p1.x, p2.y - p1.y) * 0.25);
+      g.beginPath(); g.moveTo(p1.x, p1.y); g.quadraticCurveTo(mx, my, p2.x, p2.y);
+      g.strokeStyle = a.color || CVAR('--accent'); g.lineWidth = a.width || 1.4; g.globalAlpha = a.alpha == null ? 0.75 : a.alpha; g.stroke(); g.globalAlpha = 1;
     }
+
+    // markers
+    for (const m of this.markers) {
+      const p = P(m.lon, m.lat); const r = m.r || 4;
+      if (m.pulse) {
+        const t = (Date.now() % 1600) / 1600;
+        g.beginPath(); g.arc(p.x, p.y, r + t * 12, 0, Math.PI * 2);
+        g.strokeStyle = m.color; g.globalAlpha = (1 - t) * 0.5; g.lineWidth = 1.5; g.stroke(); g.globalAlpha = 1;
+      }
+      g.beginPath(); g.arc(p.x, p.y, r, 0, Math.PI * 2); g.fillStyle = m.color; g.fill();
+      g.beginPath(); g.arc(p.x, p.y, r, 0, Math.PI * 2); g.strokeStyle = CVAR('--card'); g.lineWidth = 1.5; g.stroke();
+      if (m.label) {
+        g.font = '600 11px ' + CVAR('--font');
+        const tw = g.measureText(m.label).width;
+        const bx = Math.min(Math.max(p.x + 8, 4), w - tw - 14); const by = Math.max(14, p.y - 10);
+        g.fillStyle = CVAR('--ink'); roundRect(g, bx - 4, by - 9, tw + 8, 15, 4); g.globalAlpha = 0.85; g.fill(); g.globalAlpha = 1;
+        g.fillStyle = CVAR('--bg'); g.textBaseline = 'middle'; g.textAlign = 'left'; g.fillText(m.label, bx, by - 1);
+      }
+    }
+
+    // zoom badge
+    g.font = '10.5px ' + CVAR('--font');
+    g.fillStyle = CVAR('--ink-3'); g.textAlign = 'right'; g.textBaseline = 'bottom';
+    g.fillText(`缩放 ${this.view.scale.toFixed(1)}x · 滚轮缩放 · 拖拽平移`, w - 8, H - 6);
   }
-  return { subsolar: { decl, lon: subLon } };
 }

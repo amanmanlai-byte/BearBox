@@ -77,6 +77,14 @@ body.wallpaper .card { background: color-mix(in srgb, var(--card) 84%, transpare
 body.wallpaper .side { background: color-mix(in srgb, var(--sidebar) 90%, transparent); }
 body.wallpaper .logs { background: color-mix(in srgb, var(--card) 90%, transparent); }
 body.wallpaper .tbl th { background: color-mix(in srgb, var(--card-2) 92%, transparent); }
+
+/* frosted glass: independent opacity for card surfaces, text color untouched */
+body.glass .card { background: color-mix(in srgb, var(--card) var(--glass-pct, 60%), transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+body.glass .side { background: color-mix(in srgb, var(--sidebar) var(--glass-pct, 60%), transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+body.glass .logs { background: color-mix(in srgb, var(--card) var(--glass-pct, 60%), transparent); }
+body.glass .tbl th { background: color-mix(in srgb, var(--card-2) var(--glass-pct, 60%), transparent); }
+body.glass .modal { background: color-mix(in srgb, var(--card) 92%, transparent); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px); }
+
 input[type=range] { accent-color: var(--accent); width: 100%; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
@@ -114,7 +122,7 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 .foot button svg { width: 14px; height: 14px; }
 
 .main { flex: 1; overflow-y: auto; min-width: 0; }
-.page { max-width: 1180px; margin: 0 auto; padding: 26px 28px 40px; animation: fadein .18s ease; }
+.page { max-width: 1180px; margin: 0 auto; padding: 26px 28px 40px; }
 @keyframes fadein { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
 
 .page-head { display: flex; align-items: flex-end; gap: 14px; margin-bottom: 18px; }

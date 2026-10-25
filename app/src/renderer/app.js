@@ -72,6 +72,9 @@ function render() {
   keepFocus.restore(view.el);
   lastSig = stateSig(X.S);
   renderNav();
+  // charts are drawn synchronously after attach, in the same frame as the DOM swap:
+  // the browser paints once, so there is no blank/flash frame in between
+  if (view.mount) view.mount();
 }
 function go(p) { page = p; render(); document.getElementById('main').scrollTop = 0; }
 window.__go = go; window.__render = render;
@@ -81,8 +84,9 @@ function applyTheme() {
   const t = X.S && X.S.settings && X.S.settings.theme === 'dark' ? 'dark' : 'light';
   if (document.documentElement.dataset.theme !== t) document.documentElement.dataset.theme = t;
 }
-function applyWallpaper() {
+function applySkin() {
   const s = X.S && X.S.settings ? X.S.settings : {};
+  // wallpaper
   const on = !!s.wallpaper;
   document.body.classList.toggle('wallpaper', on);
   const wp = document.getElementById('wp');
@@ -91,11 +95,14 @@ function applyWallpaper() {
   document.documentElement.style.setProperty('--wp-o', Number(s.wallpaperOpacity) || 0.35);
   document.documentElement.style.setProperty('--wp-veil', Number(s.wallpaperVeil) || 0.55);
   document.documentElement.style.setProperty('--wp-blur', (Number(s.wallpaperBlur) || 0) + 'px');
+  // frosted glass (independent opacity; text color stays solid)
+  document.body.classList.toggle('glass', !!s.glassEnabled);
+  document.documentElement.style.setProperty('--glass-pct', Math.round((Number(s.glassOpacity) || 0.6) * 100) + '%');
 }
 
 function applyState(S) {
   X.S = S;
-  applyTheme(); applyWallpaper();
+  applyTheme(); applySkin();
   if (S.samples && S.samples.length && !X.samples.length) X.samples = S.samples.slice();
   if (S.core.state !== 'running') X.samples = [];
   // never wipe a settings form the user is editing

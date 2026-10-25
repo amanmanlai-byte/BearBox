@@ -98,6 +98,18 @@ function parseTrojan(link) {
   return clean(out);
 }
 
+/** trojan-go:// shares the trojan wire format; map ws/tls params onto a trojan outbound. */
+function parseTrojanGo(link) {
+  const u = new URL(link); const p = qs(u); const host = hostOf(u);
+  const out = {
+    type: 'trojan', tag: frag(u, `${host}:${u.port}`), server: host, server_port: num(u.port, 443),
+    password: decodeURIComponent(u.username),
+    tls: tlsFrom({ ...p, security: p.security || 'tls' }, { host, forceEnabled: true }),
+    transport: transportFrom({ ...p, type: p.type || (p.path || p.host ? 'ws' : 'tcp') }, host),
+  };
+  return clean(out);
+}
+
 function parseSS(link) {
   let rest = link.slice('ss://'.length);
   let tag = '';
@@ -170,7 +182,7 @@ function parseSocksHttp(link) {
 }
 
 const PARSERS = [
-  [/^vmess:\/\//i, parseVmess], [/^vless:\/\//i, parseVless], [/^trojan:\/\//i, parseTrojan],
+  [/^vmess:\/\//i, parseVmess], [/^vless:\/\//i, parseVless], [/^trojan-go:\/\//i, parseTrojanGo], [/^trojan:\/\//i, parseTrojan],
   [/^ss:\/\//i, parseSS], [/^(hysteria2|hy2):\/\//i, parseHy2], [/^tuic:\/\//i, parseTuic],
   [/^(socks5?|socks4a?|https?):\/\//i, parseSocksHttp],
 ];

@@ -126,9 +126,11 @@ PAGES.home = () => {
     chart.update(X.samples.slice(-120), running);
     redrawSparks();
   };
-  setTimeout(() => { paint(null); dailyChart.update(days7); }, 0);
+  const mount = () => { paint(null); dailyChart.update(days7); };
+  mount();
   return {
     el,
+    mount,
     tick: (tk) => paint(tk),
     state(S2) { // structural change happened elsewhere (e.g. daily history) - refresh today numbers in place
       tdV.textContent = '↓ ' + fmtBytes(S2.today.down || 0);
@@ -245,9 +247,9 @@ PAGES.nodes = () => {
 
   const testAll = h('button', { class: 'btn primary', disabled: S.nodes.length === 0, onclick: (e) => act(() => api('testNodes', {}), (r) => r.mode === 'url' ? `URL 测速完成（${r.count} 个节点，并发 ${S.settings.testConcurrency}）` : `内核未能启动，已降级为 TCP 连接测试（${r.error || '未知原因'}）`, e.currentTarget) }, 'URL 测速全部');
   const tbody = body.querySelector ? body.querySelector('tbody') : null;
-  setTimeout(() => refreshDist(S.nodes), 0); // draw after layout so the canvas has a size
   return {
     el: h('div', { class: 'page' }, pageHead('节点', `${S.nodes.length} 个节点 · 点击行切换当前节点`, testUrlSelect(), search, subSel, sortSel, testAll), distCard, body),
+    mount: () => refreshDist(S.nodes),
     resize: drawDist,
     /** latency-only state changes: patch cells in place instead of rebuilding the table (no flicker) */
     state(S2) {
@@ -317,10 +319,11 @@ PAGES.subs = () => {
   });
 
   const updAll = h('button', { class: 'btn', disabled: !S.subscriptions.some((s) => s.url), onclick: (e) => act(() => api('updateAllSubs'), '全部订阅已更新', e.currentTarget) }, '更新全部');
+  const fileBtn = h('button', { class: 'btn', title: '从本地文件导入订阅内容（base64 / 链接列表 / Clash YAML / sing-box / SIP008 JSON）', onclick: (e) => act(() => api('subFile'), (r) => r && r.canceled ? '' : `已从文件导入 ${r.count} 个节点` + (r.errors.length ? `，${r.errors.length} 条无法识别` : ''), e.currentTarget) }, '导入订阅文件');
   const autoNote = h('div', { class: 'note', style: { marginTop: '10px' } }, S.settings.autoUpdateSubsMin > 0 ? `订阅每 ${S.settings.autoUpdateSubsMin} 分钟自动更新（可在设置中修改）。` : '订阅自动更新未开启，可在设置中配置间隔。');
   return {
     el: h('div', { class: 'page' },
-      pageHead('订阅', `${S.subscriptions.length} 个订阅来源`, updAll),
+      pageHead('订阅', `${S.subscriptions.length} 个订阅来源`, fileBtn, updAll),
       h('div', { class: 'grid cols-2', style: { marginBottom: '14px' } }, addCard, linkCard),
       autoNote, h('div', { style: { height: '10px' } }),
       cards.length ? h('div', {}, cards) : emptyState('subs', '还没有订阅', '添加订阅链接或导入分享链接后，节点会出现在节点页。')),
@@ -364,7 +367,8 @@ PAGES.rules = () => {
       h('thead', {}, h('tr', {}, h('th', {}, '启用'), h('th', {}, '名称'), h('th', {}, '匹配条件'), h('th', {}, '出站'), h('th', { class: 'r' }, '操作'))), h('tbody', {}, rows)))
     : emptyState('rules', '没有自定义规则', '自定义规则在内置规则之后、兜底规则之前生效，保存后内核自动重启。', h('button', { class: 'btn primary', onclick: () => ruleForm() }, '新建规则'));
 
-  return { el: h('div', { class: 'page' }, pageHead('代理规则', '自定义分流规则与实际生效顺序', h('button', { class: 'btn primary', onclick: () => ruleForm() }, '新建规则')), routeCard, body) };
+  const importRuleBtn = h('button', { class: 'btn', title: '从本地文件导入规则（Clash 规则行 / JSON 规则数组）', onclick: (e) => act(() => api('ruleFile'), (r) => r && r.canceled ? '' : `已导入 ${r.imported} 条规则` + (r.skipped ? `，跳过 ${r.skipped} 条（${(r.warnings && r.warnings[0]) || '不支持'}）` : '') + '，内核已重启生效', e.currentTarget) }, '导入规则文件');
+  return { el: h('div', { class: 'page' }, pageHead('代理规则', '自定义分流规则与实际生效顺序', importRuleBtn, h('button', { class: 'btn primary', onclick: () => ruleForm() }, '新建规则')), routeCard, body) };
 };
 
 function ruleForm(r = {}) {
@@ -471,12 +475,12 @@ PAGES.conns = () => {
         h('tbody', {}, rows.length ? rows : h('tr', {}, h('td', { colspan: 9, class: 'mut2', style: { textAlign: 'center', padding: '26px' } }, '没有匹配的连接'))))));
   };
   const timer = setInterval(draw, 1000);
-  draw();
   return {
     el: h('div', { class: 'page' },
       pageHead('连接', '实时活动连接（每秒刷新）', h('div', { class: 'toolbar' }, netChips), search, countEl,
         h('button', { class: 'btn danger', disabled: !running, onclick: () => act(() => api('closeAll'), '已关闭全部连接') }, '关闭全部')),
       tiles, procCard, wrap),
+    mount: draw,
     destroy: () => { alive = false; clearInterval(timer); },
   };
 };
@@ -508,28 +512,28 @@ PAGES.geo = () => {
   };
 
   // ---- map
-  const canvas = h('canvas', { style: { width: '100%', height: '440px', display: 'block', borderRadius: '8px' } });
+  const canvas = h('canvas', { style: { width: '100%', height: '440px', display: 'block', borderRadius: '8px', touchAction: 'none' } });
+  let map = null;
   const state = { exit: null, direct: null, node: null, targets: [] }; // markers {lon,lat,...}
-
   const draw = () => {
-    if (!WORLD_GEO) return;
+    if (!map) return;
     const markers = []; const arcs = [];
     const AC = CVAR('--accent'); const DC = CVAR('--down'); const UC = CVAR('--up');
-    if (state.direct && !state.direct.error) markers.push({ ...state.direct, color: UC, r: 3.5, label: '直连' });
-    if (state.exit && !state.exit.error) markers.push({ ...state.exit, color: AC, r: 5, label: state.exit.viaProxy === false && running ? '出口' : '本机', pulse: true });
-    if (state.node && !state.node.error) markers.push({ ...state.node, color: DC, r: 4.5, label: '节点' });
-    if (state.exit && !state.exit.error && state.node && !state.node.error) arcs.push({ from: state.exit, to: state.node, color: AC, width: 2, alpha: 0.85 });
+    if (state.direct && !state.direct.error) markers.push({ lon: state.direct.longitude, lat: state.direct.latitude, color: UC, r: 3.5, label: '直连' });
+    if (state.exit && !state.exit.error) markers.push({ lon: state.exit.longitude, lat: state.exit.latitude, color: AC, r: 5, label: running ? '出口' : '本机', pulse: true });
+    if (state.node && !state.node.error) markers.push({ lon: state.node.longitude, lat: state.node.latitude, color: DC, r: 4.5, label: '节点' });
+    if (state.exit && !state.exit.error && state.node && !state.node.error) arcs.push({ from: { lon: state.exit.longitude, lat: state.exit.latitude }, to: { lon: state.node.longitude, lat: state.node.latitude }, color: AC, width: 2, alpha: 0.85 });
     const shown = new Set();
     for (const t of state.targets) {
-      if (shown.has(t.lon + ',' + t.lat)) continue;
-      shown.add(t.lon + ',' + t.lat);
+      const k = t.lon + ',' + t.lat; if (shown.has(k)) continue;
+      shown.add(k);
       markers.push({ lon: t.lon, lat: t.lat, color: CVAR('--ink-3'), r: 2.5 });
-      if (state.node && !state.node.error) arcs.push({ from: state.node, to: t, color: DC, width: 1, alpha: 0.35 });
+      if (state.node && !state.node.error) arcs.push({ from: { lon: state.node.longitude, lat: state.node.latitude }, to: t, color: DC, width: 1, alpha: 0.35 });
     }
-    drawWorldMap(canvas, WORLD_GEO, { markers, arcs });
+    map.setData({ markers, arcs, date: new Date() });
   };
 
-  let alive = true; let nodeTimer = null; let targetTimer = null; let drawTimer = null;
+  let alive = true; let targetTimer = null; let drawTimer = null; let selfTimer = null;
   const refreshSelf = async () => {
     try { const g = await api('geoSelf', {}); if (!alive) return; state.exit = g; fillInfo(exitInfo.main, g); } catch (e) { if (alive) { state.exit = { error: e.message }; fillInfo(exitInfo.main, { error: e.message }); } }
     try { const g = await api('geoSelf', { direct: true }); if (!alive) return; state.direct = g; fillInfo(directInfo.main, g, running ? null : h('span', { class: 'mut2', style: { fontSize: '11px' } }, '与出口相同：内核未运行')); } catch (e) { if (alive) fillInfo(directInfo.main, { error: e.message }); }
@@ -538,9 +542,10 @@ PAGES.geo = () => {
   const refreshNode = async () => {
     const sel = X.S.nodes.find((n) => n.id === X.S.selectedId);
     if (!sel) { fillInfo(nodeInfo.main, null); state.node = null; draw(); return; }
-    fillInfo(nodeInfo.main, { ip: sel.server, country: '查询中…' });
+    fillInfo(nodeInfo.main, { ip: sel.server, country: '解析中…' });
     try {
-      const all = await api('geoNodes', {});
+      // only the selected server: fast (single DNS + cached lookup), no waiting on the rest
+      const all = await api('geoNodes', { servers: [sel.server] });
       if (!alive) return;
       const g = all[sel.server];
       if (g && !g.error) { state.node = g; fillInfo(nodeInfo.main, g, h('span', { class: 'mut2', style: { fontSize: '11px' } }, sel.tag)); }
@@ -564,11 +569,12 @@ PAGES.geo = () => {
 
   (async () => {
     try { WORLD_GEO = WORLD_GEO || await api('worldGeo', {}); } catch (e) { if (alive) toast('世界地图数据加载失败：' + e.message, true); return; }
+    if (!alive) return;
+    map = new WorldMap(canvas, WORLD_GEO);
     draw();
     refreshSelf(); refreshNode(); refreshTargets();
-    nodeTimer = setInterval(() => { if (X.S.selectedId !== S.selectedId) { refreshNode(); } }, 2000);
     targetTimer = setInterval(refreshTargets, 5000);
-    setInterval(refreshSelf, 5 * 60 * 1000).unref?.();
+    selfTimer = setInterval(refreshSelf, 5 * 60 * 1000);
   })();
   drawTimer = setInterval(draw, 1500); // pulse animation + terminator follows real time
 
@@ -576,14 +582,18 @@ PAGES.geo = () => {
     h('span', { class: 'chip' }, h('i', { style: { background: 'var(--accent)', width: '9px', height: '9px', borderRadius: '50%' } }), '本机/出口'),
     h('span', { class: 'chip' }, h('i', { style: { background: 'var(--down)', width: '9px', height: '9px', borderRadius: '50%' } }), '节点'),
     h('span', { class: 'chip' }, h('i', { style: { background: 'var(--ink-3)', width: '9px', height: '9px', borderRadius: '50%' } }), '连接目标'),
-    h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, '深色区域为当前真实时间的黑夜'));
+    h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, '深色区域为当前真实时间的黑夜'),
+    h('span', { class: 'sp' }),
+    h('button', { class: 'btn small', onclick: () => map && map.zoomBy(1.4) }, '放大'),
+    h('button', { class: 'btn small', onclick: () => map && map.zoomBy(1 / 1.4) }, '缩小'),
+    h('button', { class: 'btn small ghost', onclick: () => map && map.resetView() }, '复位'));
   const el = h('div', { class: 'page' },
-    pageHead('地图', '自身、节点与目标服务器的地理位置 · 昼夜随真实时间变化',
+    pageHead('地图', '自身、节点与目标服务器的地理位置 · 昼夜随真实时间变化 · 滚轮缩放拖拽平移',
       h('button', { class: 'btn', onclick: (e) => act(() => (refreshSelf(), refreshNode(), refreshTargets()), undefined, e.currentTarget) }, '刷新位置')),
     h('div', { class: 'grid cols-3', style: { marginBottom: '14px' } }, exitInfo.el, directInfo.el, nodeInfo.el),
     h('div', { class: 'card' }, h('h2', {}, '世界地图', h('span', { class: 'hint' }, '地理位置来自 ip.sb 查询（本地缓存 30 天）；目标位置为服务器机房，仅供参考')), canvas, legend));
 
-  return { el, resize: draw, destroy: () => { alive = false; clearInterval(nodeTimer); clearInterval(targetTimer); clearInterval(drawTimer); } };
+  return { el, resize: () => draw(), destroy: () => { alive = false; clearInterval(targetTimer); clearInterval(drawTimer); clearInterval(selfTimer); } };
 };
 
 // ================================================================ stats
@@ -629,9 +639,11 @@ PAGES.stats = () => {
     h('div', { class: 'card' }, h('h2', {}, '每日明细'), table));
 
   const redrawDonut = () => drawDonut(donut, [{ value: s30.down, color: CVAR('--down') }, { value: s30.up, color: CVAR('--up') }], fmtBytes(s30.down + s30.up), '30 天合计');
-  setTimeout(() => { bars.update(days); redrawDonut(); }, 0);
+  const mount = () => { bars.update(days); redrawDonut(); };
+  mount();
   return {
     el,
+    mount,
     tick(t) { // keep the today/session tiles truly live while the page is open
       if (t.today) { tdV.textContent = '↓ ' + fmtBytes(t.today.down || 0); tuV.textContent = '↑ ' + fmtBytes(t.today.up || 0); }
       sdV.textContent = '↓ ' + fmtBytes(t.downTotal || 0); suV.textContent = '↑ ' + fmtBytes(t.upTotal || 0);
@@ -741,9 +753,18 @@ PAGES.settings = () => {
           const pct = (v) => Math.round(v * 100) + '%';
           const px = (v) => v + 'px';
           return h('div', { class: 'span2', style: { display: 'grid', gap: '10px' } },
-            slider('wallpaperOpacity', '壁纸浓度（图片显示强度）', 10, 100, 5, (v) => pct(v / 100)),
+            slider('wallpaperOpacity', '壁纸不透明度（图片显示强度）', 10, 100, 5, (v) => pct(v / 100)),
             slider('wallpaperVeil', '亮度遮罩（越大越接近纯色主题）', 0, 95, 5, (v) => pct(v / 100)),
             slider('wallpaperBlur', '壁纸模糊', 0, 40, 2, px));
+        })(),
+        (() => { // frosted glass: independent opacity, text stays solid
+          const live = (v) => { document.documentElement.style.setProperty('--glass-pct', Math.round(v * 100) + '%'); };
+          const deb = { t: null };
+          const r = h('input', { type: 'range', min: 15, max: 100, step: 5, value: Math.round((s.glassOpacity ?? 0.6) * 100), 'aria-label': '毛玻璃不透明度',
+            oninput: (e) => { live(Number(e.target.value) / 100); clearTimeout(deb.t); deb.t = setTimeout(() => api('setSettings', { glassOpacity: Number(e.target.value) / 100 }).catch(() => {}), 350); } });
+          const sw = h('input', { type: 'checkbox', checked: !!s.glassEnabled, onchange: (e) => act(() => api('setSettings', { glassEnabled: e.target.checked }), e.target.checked ? '毛玻璃已开启' : '毛玻璃已关闭') });
+          return h('div', { class: 'field span2' }, h('label', {}, '毛玻璃效果（卡片磨砂，文字不透明度不受影响）'),
+            h('div', { class: 'toolbar', style: { marginTop: '4px' } }, h('label', { class: 'switch' }, sw, '启用'), h('span', { class: 'sp' }), r));
         })()),
       sect('系统',
         h('div', {}, check('setSystemProxy', '启动内核时自动设置 Windows 系统代理', !S.sysproxySupported), !S.sysproxySupported ? h('div', { class: 'note' }, '当前系统不是 Windows，此项不可用') : null),

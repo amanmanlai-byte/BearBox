@@ -11,8 +11,8 @@ const mkT = () => {
   return {
     calls,
     transports: {
-      viaProxy: async (p, host, port) => { calls.proxy.push([p, host, port]); if (calls.failProxy) throw new Error('proxy down'); return JSON.stringify(GEO); },
-      direct: async (p) => { calls.direct.push(p); return JSON.stringify(GEO); },
+      viaProxy: async (host, p, ph, pp) => { calls.proxy.push([host, p, ph, pp]); if (calls.failProxy) throw new Error('proxy down'); return JSON.stringify(GEO); },
+      direct: async (host, p) => { calls.direct.push([host, p]); return JSON.stringify(GEO); },
     },
   };
 };

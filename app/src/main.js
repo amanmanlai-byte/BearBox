@@ -5,7 +5,6 @@ const path = require('path');
 const fs = require('fs');
 const { AppService } = require('./backend/service');
 const { isWindowsAdmin } = require('./backend/core');
-const { resolveHost } = require('./backend/geo');
 
 if (process.env.JIAJIA_NOSANDBOX) app.commandLine.appendSwitch('no-sandbox');
 if (process.env.JIAJIA_USERDATA) app.setPath('userData', process.env.JIAJIA_USERDATA);
@@ -93,6 +92,18 @@ const handlers = {
   state: () => svc.state(),
   addSub: (a) => svc.addSubscription(a),
   importLinks: (a) => svc.importLinks(a),
+  subFile: async () => {
+    const r = await dialog.showOpenDialog(win, { title: '选择订阅文件', filters: [{ name: '订阅文件', extensions: ['txt', 'yaml', 'yml', 'json', 'conf', 'list'] }], properties: ['openFile'] });
+    if (r.canceled || !r.filePaths[0]) return { canceled: true };
+    const content = fs.readFileSync(r.filePaths[0], 'utf8');
+    return svc.importSubFile({ name: '文件：' + path.basename(r.filePaths[0]), content });
+  },
+  ruleFile: async () => {
+    const r = await dialog.showOpenDialog(win, { title: '选择规则文件', filters: [{ name: '规则文件', extensions: ['txt', 'yaml', 'yml', 'json', 'list', 'conf'] }], properties: ['openFile'] });
+    if (r.canceled || !r.filePaths[0]) return { canceled: true };
+    const content = fs.readFileSync(r.filePaths[0], 'utf8');
+    return svc.importRuleFile(content);
+  },
   updateSub: (a) => svc.updateSubscription(a.id),
   updateAllSubs: () => svc.updateAllSubscriptions(),
   removeSub: (a) => svc.removeSubscription(a.id),
@@ -144,15 +155,13 @@ const handlers = {
     await Promise.all(ips.map(async (ip) => { try { out[ip] = await svc.geo.lookup(ip); } catch (e) { out[ip] = { error: e.message }; } }));
     return out;
   },
-  geoNodes: async () => {
-    // locations for node servers: DNS resolve (direct) + cached ip.sb lookups
-    const servers = [...new Set(svc.d.nodes.map((n) => n.outbound.server))].slice(0, 12);
+  geoNodes: async (a) => {
+    // locations for node servers: DoH-backed resolve (system DNS often NXDOMAINs proxy
+    // domains in CN) + cached ip.sb lookups. Only the requested servers when given.
+    const wanted = (a && a.servers && a.servers.length) ? a.servers : [...new Set(svc.d.nodes.map((n) => n.outbound.server))];
+    const servers = [...new Set(wanted)].slice(0, 12);
     const out = {};
-    await Promise.all(servers.map(async (server) => {
-      const ip = await resolveHost(server).catch(() => null);
-      if (!ip) { out[server] = { error: 'DNS 解析失败' }; return; }
-      try { out[server] = { ip, ...(await svc.geo.lookup(ip)) }; } catch (e) { out[server] = { ip, error: e.message }; }
-    }));
+    await Promise.all(servers.map(async (server) => { out[server] = await svc.geo.locate(server).catch((e) => ({ error: e.message })); }));
     return out;
   },
   worldGeo: () => {

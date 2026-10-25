@@ -3,14 +3,14 @@ const path = require('path');
 const { EventEmitter } = require('events');
 const { Store, dayKey } = require('./store');
 const { Core, resolveCoreBinary, resolveRulesetDir, tcpPing } = require('./core');
-const { buildConfig, DEFAULT_SETTINGS } = require('./config');
+const { buildConfig, DEFAULT_SETTINGS, parseRuleFile } = require('./config');
 const { parseSubscriptionBody, dedupeTags, fetchSubscription } = require('./subscription');
 const { parseLinks } = require('./links');
 const { SystemProxy } = require('./sysproxy');
 const { GeoService, resolveHost } = require('./geo');
 
 // Settings that only affect the UI or app shell; changing them must not restart a running core.
-const NO_RESTART_KEYS = ['setSystemProxy', 'autoStartCore', 'connectionTestURL', 'testConcurrency', 'theme', 'closeToTray', 'autoUpdateSubsMin', 'wallpaper', 'wallpaperOpacity', 'wallpaperVeil', 'wallpaperBlur'];
+const NO_RESTART_KEYS = ['setSystemProxy', 'autoStartCore', 'connectionTestURL', 'testConcurrency', 'theme', 'closeToTray', 'autoUpdateSubsMin', 'wallpaper', 'wallpaperOpacity', 'wallpaperVeil', 'wallpaperBlur', 'glassEnabled', 'glassOpacity'];
 const LEGACY_TEST_URL = 'https://cp.cloudflare.com/generate_204'; // default before v0.2.2
 
 class AppService extends EventEmitter {
@@ -254,13 +254,37 @@ class AppService extends EventEmitter {
   }
 
   async saveRule(rule) {
-    const r = { id: rule.id || this.store.id(), name: rule.name || '', enabled: rule.enabled !== false, domain: rule.domain || '', ip: rule.ip || '', port: rule.port || '', network: rule.network || 'any', protocol: rule.protocol || '', outbound: rule.outbound || 'proxy' };
+    const r = { id: rule.id || this.store.id(), name: rule.name || '', enabled: rule.enabled !== false, domain: rule.domain || '', ip: rule.ip || '', port: rule.port || '', sourceIp: rule.sourceIp || '', sourcePort: rule.sourcePort || '', processName: rule.processName || '', network: rule.network || 'any', protocol: rule.protocol || '', outbound: rule.outbound || 'proxy' };
     const i = this.d.rules.findIndex((x) => x.id === r.id);
     if (i >= 0) this.d.rules[i] = r; else this.d.rules.push(r);
     this.store.save(); this.emitState();
     if (this.core.state === 'running') await this.restart();
   }
   async removeRule(id) { this.d.rules = this.d.rules.filter((r) => r.id !== id); this.store.save(); this.emitState(); if (this.core.state === 'running') await this.restart(); }
+
+  /** Import many rules at once (from a file). One core restart at most. Returns a summary. */
+  async importRuleFile(text) {
+    const { rules, warnings, skipped } = parseRuleFile(text);
+    if (!rules.length) { const e = new Error(warnings[0] || '没有可导入的规则'); e.warnings = warnings; throw e; }
+    for (const r of rules) {
+      this.d.rules.push({ id: this.store.id(), name: r.name || '导入规则', enabled: r.enabled !== false, domain: r.domain || '', ip: r.ip || '', port: r.port || '', sourceIp: r.sourceIp || '', sourcePort: r.sourcePort || '', processName: r.processName || '', network: r.network || 'any', protocol: r.protocol || '', outbound: r.outbound || 'proxy' });
+    }
+    this.store.save(); this.emitState();
+    if (this.core.state === 'running') await this.restart();
+    return { imported: rules.length, skipped, warnings: warnings.slice(0, 10) };
+  }
+
+  /** Import a subscription from a local file's content (same formats as URL subscriptions). */
+  async importSubFile({ name, content }) {
+    const parsed = parseSubscriptionBody(content);
+    if (!parsed.nodes.length) throw new Error('文件中没有解析出任何节点' + (parsed.errors[0] ? `（${parsed.errors[0].error}）` : ''));
+    let sub = this.d.subscriptions.find((s) => !s.url && s.name === (name || '手动导入'));
+    if (!sub) { sub = { id: this.store.id(), name: name || '手动导入', url: null, updatedAt: Date.now(), info: null, error: null }; this.d.subscriptions.push(sub); }
+    const existing = this.d.nodes.filter((n) => n.subId === sub.id).map((n) => n.outbound);
+    this._ingest(sub, { nodes: [...existing, ...parsed.nodes], errors: parsed.errors, format: parsed.format });
+    sub.updatedAt = Date.now(); this.store.save(); this.emitState();
+    return { count: parsed.nodes.length, errors: parsed.errors };
+  }
 
   // ---------- stats ----------
   onTick(t) {

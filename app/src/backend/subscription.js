@@ -10,6 +10,17 @@ function fromSingBoxJson(obj) {
   return { nodes, errors: [] };
 }
 
+/** SIP008 (shadowsocks.org subscription spec): {version, servers:[{server,server_port,method,password,remarks}]} */
+function fromSip008(obj) {
+  const servers = Array.isArray(obj.servers) ? obj.servers : [];
+  const nodes = []; const errors = [];
+  for (const s of servers) {
+    if (!s || !s.server || !s.server_port || !s.method || s.password == null) { errors.push({ line: s && s.server, error: 'SIP008 条目缺少必要字段' }); continue; }
+    nodes.push({ type: 'shadowsocks', tag: s.remarks || s.remark || `${s.server}:${s.server_port}`, server: String(s.server), server_port: Number(s.server_port), method: String(s.method), password: String(s.password) });
+  }
+  return { nodes, errors };
+}
+
 function clashTls(c, host) {
   if (!(c.tls || c.security === 'tls')) return undefined;
   const tls = { enabled: true, server_name: c.servername || c.sni || host };
@@ -62,12 +73,24 @@ function fromClash(doc) {
   return { nodes, errors };
 }
 
-/** Decode raw subscription body into nodes. Order: sing-box JSON, Clash YAML, base64 list, plain link list. */
+/** Decode raw subscription body into nodes. Order: sing-box JSON, SIP008, JSON array of links,
+ *  Clash YAML, base64 list, plain link list. */
 function parseSubscriptionBody(body) {
   const text = String(body).replace(/^\uFEFF/, '').trim();
   if (!text) return { nodes: [], errors: [{ line: '', error: 'empty subscription' }], format: 'empty' };
   if (text.startsWith('{')) {
-    try { const j = JSON.parse(text); if (j.outbounds) return { ...fromSingBoxJson(j), format: 'sing-box' }; } catch { /* fall through */ }
+    try {
+      const j = JSON.parse(text);
+      if (j.outbounds) return { ...fromSingBoxJson(j), format: 'sing-box' };
+      if (Array.isArray(j.servers)) return { ...fromSip008(j), format: 'sip008' };
+    } catch { /* fall through */ }
+  }
+  if (text.startsWith('[')) {
+    try {
+      const j = JSON.parse(text);
+      if (Array.isArray(j) && j.every((x) => typeof x === 'string')) return { ...parseLinks(j.join('\n')), format: 'links' };
+      if (Array.isArray(j) && j.every((x) => x && typeof x === 'object')) return { ...fromSip008({ servers: j }), format: 'sip008' };
+    } catch { /* fall through */ }
   }
   if (/^\s*(proxies|port|mixed-port|proxy-groups)\s*:/m.test(text)) {
     try { const d = yaml.load(text); if (d && d.proxies) return { ...fromClash(d), format: 'clash' }; } catch { /* fall through */ }
