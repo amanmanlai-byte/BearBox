@@ -1099,7 +1099,7 @@ PAGES.about = () => {
     sect('作者与贡献者',
       h('table', { class: 'tbl' }, h('tbody', {},
         h('tr', {}, h('td', { style: { width: '140px', color: 'var(--ink-3)' } }, 'Bear Box 桌面端'),
-          h('td', {}, h('b', {}, ABOUT_INFO.author.name || '待填写（在此配置你的 GitHub 用户名）'), ' ', ABOUT_INFO.author.url ? link('→ 仓库', ABOUT_INFO.author.url) : h('span', { class: 'mut2', style: { fontSize: '11px' } }, '（仓库地址待填写）'))),
+          h('td', {}, link(ABOUT_INFO.author.name || 'Bear Box', ABOUT_INFO.repo.url), ' ', link('→ ' + (ABOUT_INFO.repo.url || ''), ABOUT_INFO.repo.url))),
         h('tr', {}, h('td', { style: { color: 'var(--ink-3)' } }, 'JiajiaBox 原始项目'),
           h('td', {}, h('b', {}, 'weilai090624-code'), ' ', link('→ 仓库', ABOUT_INFO.original.url))),
         h('tr', {}, h('td', { style: { color: 'var(--ink-3)' } }, 'sing-box 代理内核'),
