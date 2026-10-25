@@ -14,7 +14,7 @@ const DEFAULT_SETTINGS = {
   directDns: 'https://223.5.5.5/dns-query',
   ipv6Mode: 'prefer_ipv4',     // prefer_ipv4 | prefer_ipv6 | ipv4_only | ipv6_only
   connectionTestURL: 'https://www.google.com/generate_204', // the Jiajia core's Clash API ignores http:// test URLs (clashapi/proxies.go), so https is required
-  testConcurrency: 5,          // parallel URL tests (same as the Android app's connection test concurrency)
+  testConcurrency: 3,          // parallel URL tests (same as the Android app's connection test concurrency)
   logLevel: 'info',
   apiPort: 9090,
   tun: false,                  // TUN mode (needs admin + wintun.dll on Windows; not verified in the sandbox)

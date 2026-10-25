@@ -105,10 +105,10 @@ test('UI-only settings never restart a running core', async () => {
   assert.equal(restarted, true);
 });
 
-test('invalid test concurrency falls back to 5', async () => {
+test('invalid test concurrency falls back to 3', async () => {
   const svc = mkSvc();
   await svc.setSettings({ testConcurrency: NaN });
-  assert.equal(svc.d.settings.testConcurrency, 5);
+  assert.equal(svc.d.settings.testConcurrency, 3);
   await svc.setSettings({ testConcurrency: 99 });
   assert.equal(svc.d.settings.testConcurrency, 32);
 });
@@ -122,8 +122,8 @@ test('testNodes URL-tests by temp-starting the core, then stops it', async () =>
   assert.equal(r.error, null);
   assert.equal(core.startCalls.length, 1);
   assert.equal(core.stopCalls, 1, 'temp start stopped again');
-  assert.equal(core.delayCalls.length, 1);
-  assert.equal(core.delayCalls[0][1], svc.d.settings.connectionTestURL);
+  assert.equal(core.delayCalls.length, 2, 'warm-up + test'); // warm-up through the selected node, then the actual test
+  assert.equal(core.delayCalls[1][1], svc.d.settings.connectionTestURL);
   const n = svc.d.nodes[0];
   assert.equal(n.latency, 42); assert.equal(n.latencyKind, 'url');
 });
@@ -202,15 +202,16 @@ test('state() exposes the route preview after build()', () => {
 test('testNodes can be stopped mid-run; queued nodes are skipped', async () => {
   const core = fakeCore();
   const svc = mkSvc({ core });
-  const links = ['a', 'b', 'c'].map((t, i) => 'ss://' + Buffer.from('aes-128-gcm:pw' + i).toString('base64') + '@127.0.0.1:' + (10 + i) + '#' + t).join('\n');
+  const links = ['a', 'b', 'c', 'd', 'e', 'f'].map((t, i) => 'ss://' + Buffer.from('aes-128-gcm:pw' + i).toString('base64') + '@127.0.0.1:' + (10 + i) + '#' + t).join('\n');
   svc.importLinks({ text: links });
-  core.delay = async (tag, url) => { core.delayCalls.push([tag, url]); svc._testStop = true; return 7; }; // user presses stop during the first check
+  let callN = 0;
+  core.delay = async (tag, url) => { callN++; core.delayCalls.push([tag, url]); if (callN > 3) svc._testStop = true; return 7; }; // stop after warm-up + first batch of 3
   const r = await svc.testNodes();
   assert.equal(r.stopped, true);
-  assert.equal(r.done, 1, 'in-flight node finished, queued ones skipped');
-  assert.equal(core.delayCalls.length, 1);
+  assert.equal(r.done, 3, 'warm-up + first batch (3 concurrent) finished, queued ones skipped');
+  assert.equal(core.delayCalls.length, 4, 'warm-up + 3 in-flight');
   assert.equal(svc._testing, false, 'testing flag cleared');
-  assert.equal(svc.d.nodes.filter((n) => n.latency === 7).length, 1);
+  assert.equal(svc.d.nodes.filter((n) => n.latency === 7).length, 3);
   assert.equal(svc.stopTestNodes().stopping, false, 'stop is a no-op when idle');
 });
 

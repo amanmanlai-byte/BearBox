@@ -191,9 +191,16 @@ class AppService extends EventEmitter {
       } catch (e) { fallbackError = e.message; this.core.pushLog('WARN URL 测速需临时启动内核失败，改用 TCP 连接测试: ' + e.message); }
     }
     const mode = running ? 'url' : 'tcp';
-    const workers = Math.max(1, Math.min(32, Number(this.d.settings.testConcurrency) || 5));
+    const workers = Math.max(1, Math.min(32, Number(this.d.settings.testConcurrency) || 3));
     let i = 0;
     this._testStop = false; this._testing = true; this._testDone = 0; this.emitState();
+    // warm-up: one request through the selected node establishes the connection pool and
+    // DNS cache. Without this, the first batch of concurrent tests competes for a cold
+    // DNS resolver and fresh TLS sessions, inflating every latency by hundreds of ms.
+    if (running && this.d.selectedId) {
+      const sel = this.d.nodes.find((n) => n.id === this.d.selectedId);
+      if (sel) { try { await this.core.delay(sel.outbound.tag, url, 5000); } catch { /* warm-up failure is fine */ } }
+    }
     const worker = async () => {
       while (i < list.length && !this._testStop) {
         const n = list[i++];
@@ -285,7 +292,7 @@ class AppService extends EventEmitter {
     if (port === api) throw new Error('代理端口与 API 端口不能相同');
     if (!/^https:\/\//i.test(String(s.connectionTestURL))) throw new Error('测速地址必须以 https:// 开头（内核会忽略 http:// 地址）');
     s.mixedPort = port; s.apiPort = api;
-    if (!(Number(s.testConcurrency) > 0)) s.testConcurrency = 5; else s.testConcurrency = Math.min(32, Math.floor(Number(s.testConcurrency)));
+    if (!(Number(s.testConcurrency) > 0)) s.testConcurrency = 3; else s.testConcurrency = Math.min(32, Math.floor(Number(s.testConcurrency)));
     // repair slider-era values that were persisted on percent scales (e.g. opacity 55 -> 0.55)
     for (const [k, max] of [['wallpaperOpacity', 1], ['wallpaperVeil', 0.95], ['glassOpacity', 1]]) {
       const v = Number(s[k]);
