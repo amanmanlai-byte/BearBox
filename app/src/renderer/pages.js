@@ -1053,8 +1053,8 @@ function colorWheelPicker(currentColor, onPick, onReset) {
 
 // ================================================================ about
 const ABOUT_INFO = {
-  repo: { url: '', label: '待填写（创建仓库后在此配置）' },
-  author: { name: '', url: '' },
+  repo: { url: 'https://github.com/amanmanlai-byte/BearBox', label: 'Bear Box 桌面端仓库' },
+  author: { name: 'amanmanlai-byte', url: 'https://github.com/amanmanlai-byte' },
   original: { name: 'weilai090624-code', url: 'https://github.com/weilai090624-code/JiajiaBox' },
   kernel: { name: 'SagerNet (nekohasekai)', url: 'https://github.com/SagerNet/sing-box' },
 };
