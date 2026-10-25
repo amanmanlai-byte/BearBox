@@ -32,8 +32,11 @@ const dayKeyOf = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() +
  * view.state(S) instead of rebuilding the page - that is what stops the flicker.
  */
 function stateSig(S) {
+  // On the geo page, core state changes (start/stop) don't rebuild the page - the
+  // page's own state() callback handles them in place, so the 3D globe never flashes.
+  const coreState = page === 'geo' ? null : S.core.state;
   return JSON.stringify([
-    S.core.state, S.core.error, S.proxyApplied, S.selectedId, S.settings,
+    coreState, S.core.error, S.proxyApplied, S.selectedId, S.settings,
     S.subscriptions.map((s) => [s.id, s.count, s.updatedAt, s.error, s.info && s.info.total, s.info && s.info.expire]),
     S.rules.map((r) => [r.id, r.enabled]),
     S.nodes.length, S.nodes.map((n) => n.subId).join(','),

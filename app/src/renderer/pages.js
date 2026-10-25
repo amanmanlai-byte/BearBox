@@ -852,6 +852,11 @@ PAGES.geo = () => {
   return {
     el,
     resize: () => draw(),
+    /** core state changes (start/stop) arrive here instead of a full re-render, so the globe never flashes */
+    state(S2) {
+      fillExitNode(); // isRunning() reads X.S.core.state which applyState already updated
+      purityBtn.disabled = !isRunning();
+    },
     destroy: () => { alive = false; clearInterval(targetTimer); clearInterval(drawTimer); clearInterval(selfTimer); clearInterval(nodeTimer); if (globe) { try { globe.destroy(); } catch { } globe = null; } },
   };
 };

@@ -45,7 +45,10 @@ function httpsViaProxy(host, reqPath, proxyHost, proxyPort, timeoutMs = 12000) {
             let out = body;
             if (m) { const len = +m[1]; out = Buffer.from(body, 'utf8').slice(0, len).toString('utf8'); }
             else if (/transfer-encoding:\s*chunked/i.test(headers)) out = dechunk(body);
-            if (/^2\d\d/.test((headers.split('\r\n')[0] || '').trim())) resolve(out); else reject(new Error('HTTP 错误: ' + headers.split('\r\n')[0]));
+            const statusLine = (headers.split('\r\n')[0] || '').trim();
+            const sm = /HTTP\/1\.[01]\s+(\d+)/.exec(statusLine);
+            const sc = sm ? parseInt(sm[1], 10) : 0;
+            if (sc >= 200 && sc < 300) resolve(out); else reject(new Error('HTTP ' + (sc || statusLine)));
           });
           tlsSock.once('error', fail);
         });
