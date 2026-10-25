@@ -12,6 +12,7 @@ const NAV = [
   ['logs', '运行日志', ICONS.logs],
   ['toolbox', '工具箱', ICONS.toolbox],
   ['settings', '设置', ICONS.settings],
+  ['about', '关于', ICONS.about],
 ];
 // Shared mutable context: current state snapshot, live sample buffer, log buffer, UI prefs.
 const X = {

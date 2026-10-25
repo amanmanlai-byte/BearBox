@@ -126,6 +126,16 @@ const handlers = {
     return { ok: true, path: r.filePath };
   },
   openDataDir: () => { shell.openPath(app.getPath('userData')); return { ok: true }; },
+  openExternal: (a) => { if (a && a.url && /^https?:\/\//.test(a.url)) shell.openExternal(a.url); return { ok: true }; },
+  appInfo: () => ({
+    version: app.getVersion(),
+    platform: process.platform,
+    arch: process.arch,
+    electron: process.versions.electron,
+    node: process.versions.node,
+    chrome: process.versions.chrome,
+    userData: app.getPath('userData'),
+  }),
   updateSub: (a) => svc.updateSubscription(a.id),
   renameSub: (a) => svc.renameSubscription(a.id, a.name),
   updateAllSubs: () => svc.updateAllSubscriptions(),
@@ -273,7 +283,7 @@ async function runShots(dir) {
       }
     } catch (e) { console.log('INPUT_TEST_ERR', e.message); }
   }
-  for (const page of (process.env.JIAJIA_SHOT_PAGES || 'home,nodes,subs,rules,conns,geo,stats,logs,toolbox,settings').split(',')) {
+  for (const page of (process.env.JIAJIA_SHOT_PAGES || 'home,nodes,subs,rules,conns,geo,stats,logs,toolbox,settings,about').split(',')) {
     await win.webContents.executeJavaScript(`window.__go && window.__go(${JSON.stringify(page)})`);
     await new Promise((r) => setTimeout(r, Number(process.env.JIAJIA_SHOT_WAIT || 700)));
     const img = await win.webContents.capturePage();

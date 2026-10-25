@@ -1051,6 +1051,128 @@ function colorWheelPicker(currentColor, onPick, onReset) {
       swatches));
 }
 
+// ================================================================ about
+const ABOUT_INFO = {
+  repo: { url: '', label: '待填写（创建仓库后在此配置）' },
+  author: { name: '', url: '' },
+  original: { name: 'weilai090624-code', url: 'https://github.com/weilai090624-code/JiajiaBox' },
+  kernel: { name: 'SagerNet (nekohasekai)', url: 'https://github.com/SagerNet/sing-box' },
+};
+
+PAGES.about = () => {
+  const info = {}; // filled from IPC
+  const link = (text, url) => {
+    if (!url) return h('span', { class: 'mut2' }, text);
+    return h('a', { href: url, style: { color: 'var(--accent)', textDecoration: 'none' }, onclick: (e) => { e.preventDefault(); api('openExternal', { url }); } }, text);
+  };
+  const sect = (title, ...kids) => h('div', { class: 'card', style: { marginBottom: '14px' } }, h('h2', {}, title), ...kids);
+  const el = h('div', { class: 'page' },
+    pageHead('关于', 'Bear Box — 简约易用的 Windows 桌面代理客户端'),
+
+    // hero
+    h('div', { class: 'card', style: { display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '14px', padding: '20px 24px' } },
+      h('div', { style: { width: '56px', height: '56px', borderRadius: '14px', backgroundImage: "url('assets/brand.png')", backgroundSize: 'cover', flex: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' } }),
+      h('div', { style: { flex: '1' } },
+        h('b', { style: { fontSize: '18px' } }, 'Bear Box'),
+        h('span', { class: 'tag accent', style: { marginLeft: '8px' } }, 'v0.2.0'),
+        h('div', { class: 'mut2', style: { fontSize: '12px', marginTop: '4px' }, ref: 'platform' }, '加载平台信息…'),
+        h('div', { class: 'note', style: { marginTop: '6px', lineHeight: '1.5' } },
+          '简约易用的 Windows 桌面代理客户端。基于 JiajiaBox（Android）项目二次开发，采用独立的 UI 与架构。默认内置 CNIP + CN 域名分流，开袋即食。')),
+      h('div', { class: 'grid', style: { gap: '8px', flex: 'none' } },
+        link('原始项目 →', ABOUT_INFO.original.url),
+        ABOUT_INFO.repo.url ? link('本项目仓库 →', ABOUT_INFO.repo.url) : h('span', { class: 'mut2', style: { fontSize: '11px' } }, '本项目仓库：待填写'))),
+
+    // open source declaration
+    sect('开源声明',
+      h('div', { class: 'note', style: { lineHeight: '1.7' } },
+        h('b', {}, 'Bear Box 桌面端'), ' 基于 ', h('b', {}, 'JiajiaBox（Android）'), ' 项目二次开发。', h('br'),
+        '桌面端 UI、后端逻辑、订阅解析、图表和配置管理为本项目新增开发。', h('br'),
+        '3D WebGL 地球渲染器移植自 JiajiaBox 的 assets/globe/ 目录（MIT，原作者 weilai090624-code）。', h('br'),
+        '代理内核 ', h('b', {}, 'sing-box'), ' 由 SagerNet (nekohasekai) 开发，JiajiaBox 项目维护其定制分支（版本 1.14.3-Jiajia-7）。', h('br'),
+        h('br'),
+        h('b', {}, '许可证：'), '本软件采用 ', h('b', {}, 'MIT License'), '。代理内核 sing-box 采用 ', h('b', {}, 'GPL-3.0'), '（独立进程，进程隔离）。', h('br'),
+        '原始项目 JiajiaBox 采用 ', h('b', {}, 'MIT License'), '。', h('br'),
+        h('br'),
+        '源代码获取：本软件发布时随附源代码仓库地址，或通过上方链接访问上游仓库获取。')),
+
+    // authors
+    sect('作者与贡献者',
+      h('table', { class: 'tbl' }, h('tbody', {},
+        h('tr', {}, h('td', { style: { width: '140px', color: 'var(--ink-3)' } }, 'Bear Box 桌面端'),
+          h('td', {}, h('b', {}, ABOUT_INFO.author.name || '待填写（在此配置你的 GitHub 用户名）'), ' ', ABOUT_INFO.author.url ? link('→ 仓库', ABOUT_INFO.author.url) : h('span', { class: 'mut2', style: { fontSize: '11px' } }, '（仓库地址待填写）'))),
+        h('tr', {}, h('td', { style: { color: 'var(--ink-3)' } }, 'JiajiaBox 原始项目'),
+          h('td', {}, h('b', {}, 'weilai090624-code'), ' ', link('→ 仓库', ABOUT_INFO.original.url))),
+        h('tr', {}, h('td', { style: { color: 'var(--ink-3)' } }, 'sing-box 代理内核'),
+          h('td', {}, h('b', {}, 'SagerNet (nekohasekai)'), ' ', link('→ 仓库', ABOUT_INFO.kernel.url))),
+        h('tr', {}, h('td', { style: { color: 'var(--ink-3)' } }, 'Electron 框架'),
+          h('td', {}, h('b', {}, 'Electron contributors'), ' ', link('→ 官网', 'https://www.electronjs.org/'))),
+        h('tr', {}, h('td', { style: { color: 'var(--ink-3)' } }, 'js-yaml'),
+          h('td', {}, h('b', {}, 'Vladimir Zapparov'), ' ', link('→ 仓库', 'https://github.com/nodeca/js-yaml'))),
+        h('tr', {}, h('td', { style: { color: 'var(--ink-3)' } }, '地球贴图'),
+          h('td', {}, h('b', {}, 'Solar System Scope / INOVE'), ' ', link('→ 纹理页', 'https://www.solarsystemscope.com/textures/'), h('span', { class: 'tag', style: { marginLeft: '6px' } }, 'CC BY 4.0')))))),
+
+    // open source acknowledgments
+    sect('开源鸣谢',
+      h('div', { class: 'note', style: { lineHeight: '1.7' } },
+        '感谢以下开源项目和依赖，没有它们就没有 Bear Box：', h('br'),
+        h('b', {}, 'JiajiaBox（Android）'), ' — 原始项目，节点名配置映射和地球渲染器的来源（MIT）', h('br'),
+        h('b', {}, 'sing-box / SagerNet'), ' — 代理内核，强大的多协议代理引擎（GPL-3.0）', h('br'),
+        h('b', {}, 'NekoBox'), ' — UI 风格和设计理念的灵感来源', h('br'),
+        h('b', {}, 'Electron'), ' — 桌面应用框架（MIT）', h('br'),
+        h('b', {}, 'js-yaml'), ' — Clash YAML 订阅解析（MIT）', h('br'),
+        h('b', {}, 'Solar System Scope'), ' — 地球贴图（CC BY 4.0）', h('br'),
+        h('b', {}, 'Natural Earth'), ' — 世界地图 GeoJSON 数据（公有领域）', h('br'),
+        h('b', {}, 'WireGuard / wintun'), ' — TUN 虚拟网卡驱动（MIT）')),
+
+    // license
+    sect('许可证',
+      h('div', { class: 'note', style: { lineHeight: '1.7' } },
+        h('b', {}, 'Bear Box 桌面端：'), 'MIT License', h('br'),
+        'Copyright (c) 2026 Bear Box contributors', h('br'),
+        h('br'),
+        h('b', {}, 'sing-box 内核：'), 'GNU General Public License v3.0', h('br'),
+        'Copyright (C) 2022 by nekohasekai', h('br'),
+        '内核以独立进程运行（进程隔离），其 GPL-3.0 不自动扩展到本软件的 MIT 代码。', h('br'),
+        '分发内核二进制时，其源代码可通过 JiajiaBox 仓库获取。', h('br'),
+        h('br'),
+        h('b', {}, '地球贴图：'), 'Creative Commons Attribution 4.0 International', h('br'),
+        'Copyright (c) Solar System Scope / INOVE', h('br'),
+        h('br'),
+        '完整许可证文本和第三方声明请查看项目仓库中的 ',
+        h('b', {}, 'LICENSE'), '、', h('b', {}, 'NOTICE'), ' 和 ', h('b', {}, 'THIRD_PARTY_NOTICES.md'), ' 文件。')),
+
+    // legal
+    sect('版权与法律声明',
+      h('div', { class: 'note', style: { lineHeight: '1.7' } },
+        h('b', {}, '本软件与原始项目的关系：'), '本软件是 JiajiaBox 的桌面端二次开发版本，采用独立的软件名称、UI 和架构。本软件未获得原始项目作者的官方认可或授权。', h('br'),
+        h('br'),
+        h('b', {}, '版权归属：'), h('br'),
+        '· Bear Box 桌面端新增代码：Copyright (c) 2026 Bear Box contributors', h('br'),
+        '· JiajiaBox 原始项目：Copyright (c) 2026 weilai090624-code', h('br'),
+        '· sing-box 内核：Copyright (C) 2022 by nekohasekai', h('br'),
+        '· 地球贴图：Solar System Scope / INOVE', h('br'),
+        h('br'),
+        'Bear Box 和 Bear Box 图标为本项目的标识。JiajiaBox 和 sing-box 为各自项目的标识。')),
+
+    // links
+    sect('链接',
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+        link('🌐 JiajiaBox 原始项目（Android）', ABOUT_INFO.original.url),
+        link('🌐 sing-box 上游项目', ABOUT_INFO.kernel.url),
+        link('📄 本软件许可证（MIT）', 'https://opensource.org/licenses/MIT'),
+        link('📄 GPL-3.0 许可证（内核）', 'https://www.gnu.org/licenses/gpl-3.0.html'),
+        link('📄 CC BY 4.0（地球贴图）', 'https://creativecommons.org/licenses/by/4.0/'),
+        ABOUT_INFO.repo.url ? link('📦 本项目仓库', ABOUT_INFO.repo.url) : null,
+        ABOUT_INFO.repo.url ? link('🐛 问题反馈', ABOUT_INFO.repo.url + '/issues') : null)));
+
+  // fetch platform info
+  api('appInfo', {}).then((i) => {
+    const p = el.querySelector('[ref=platform]');
+    if (p) p.textContent = `${i.platform === 'win32' ? 'Windows' : i.platform} ${i.arch} · Electron ${i.electron} · Node ${i.node}`;
+  }).catch(() => {});
+  return { el };
+};
+
 // ================================================================ settings
 PAGES.settings = () => {
   const S = X.S; const s = S.settings; const F = {};
