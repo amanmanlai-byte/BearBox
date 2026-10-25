@@ -98,6 +98,11 @@ function go(p) {
 window.__go = go; window.__render = render;
 window.__applyState = applyState; // test hook: inject a state snapshot (used by verification probes)
 
+function applyBrandArtwork() {
+  const mark = document.querySelector('.brand .mark');
+  if (mark) mark.style.backgroundImage = "url('assets/brand.png')";
+}
+
 function applyTheme() {
   const t = X.S && X.S.settings && X.S.settings.theme === 'dark' ? 'dark' : 'light';
   if (document.documentElement.dataset.theme !== t) document.documentElement.dataset.theme = t;
@@ -135,6 +140,7 @@ function applySkin() {
 
 function applyState(S) {
   X.S = S;
+  applyBrandArtwork();
   applyTheme(); applySkin();
   if (S.samples && S.samples.length && !X.samples.length) X.samples = S.samples.slice();
   if (S.core.state !== 'running') X.samples = [];
@@ -171,8 +177,8 @@ window.addEventListener('resize', () => view && view.resize && view.resize());
       h('div', { class: 'card', style: { margin: '60px auto', maxWidth: '520px', textAlign: 'center', padding: '36px 28px' } },
         h('b', { style: { fontSize: '16px' } }, '这不是网页，请用桌面程序打开'),
         h('div', { class: 'note', style: { marginTop: '10px', lineHeight: '1.7' } },
-          'JiajiaBox 的界面必须由 JiajiaBox.exe 加载，浏览器里没有它的数据通道，所以这里没有内容。',
-          h('br'), '请到程序文件夹中双击 JiajiaBox.exe 启动。'))));
+          'Bear Box 的界面必须由桌面程序加载，浏览器里没有它的数据通道，所以这里没有内容。',
+          h('br'), '请到程序文件夹中双击 Bear Box 启动。'))));
     return;
   }
   try { X.logs = await api('logs'); applyState(await api('state')); } catch (e) {

@@ -121,15 +121,26 @@ function dedupeTags(nodes, reserved = []) {
   return nodes;
 }
 
-async function fetchSubscription(url, { userAgent = 'JiajiaBox/0.0.4 (Windows)', timeoutMs = 20000, allowInsecure = false } = {}) {
-  const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { headers: { 'User-Agent': userAgent, Accept: '*/*' }, signal: ctl.signal, redirect: 'follow' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const body = await res.text();
-    const info = parseUserInfo(res.headers.get('subscription-userinfo'));
-    return { body, info };
-  } finally { clearTimeout(timer); }
+// Many airport panels block unknown User-Agents (403 "The User-Agent has been blocked").
+// Proxy-client UAs are the industry whitelist; try them in order before giving up.
+const SUB_UA_CHAIN = ['clash.meta/1.18.0', 'v2rayN/6.23', 'Shadowrocket/2072', 'JiajiaBox/0.4 (Windows)'];
+
+async function fetchSubscription(url, { userAgent = null, timeoutMs = 20000, allowInsecure = false } = {}) {
+  const chain = userAgent ? [userAgent] : SUB_UA_CHAIN;
+  let lastErr = null;
+  for (const ua of chain) {
+    const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': ua, Accept: '*/*' }, signal: ctl.signal, redirect: 'follow' });
+      if (!res.ok) { lastErr = new Error(`HTTP ${res.status}（服务器拒绝了 User-Agent "${ua}"）`); continue; }
+      const body = await res.text();
+      if (!body.trim()) { lastErr = new Error(`HTTP 200 但内容为空（UA "${ua}"）`); continue; }
+      const info = parseUserInfo(res.headers.get('subscription-userinfo'));
+      return { body, info };
+    } catch (e) { lastErr = e; }
+    finally { clearTimeout(timer); }
+  }
+  throw lastErr || new Error('订阅下载失败');
 }
 
 module.exports = { parseSubscriptionBody, parseUserInfo, dedupeTags, fetchSubscription };

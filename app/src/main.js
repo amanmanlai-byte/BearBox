@@ -41,7 +41,7 @@ function buildTray() {
   const icon = trayIcon();
   if (!icon) return;
   tray = new Tray(icon);
-  tray.setToolTip('JiajiaBox');
+  tray.setToolTip('Bear Box');
   const refresh = () => {
     const st = svc ? svc.core.state : 'stopped';
     const running = st === 'running';
@@ -53,7 +53,7 @@ function buildTray() {
       { type: 'separator' },
       { label: '退出', click: () => { quitting = true; app.quit(); } },
     ]));
-    tray.setToolTip(`JiajiaBox - ${running ? '内核运行中' : '内核已停止'}`);
+    tray.setToolTip(`Bear Box - ${running ? '内核运行中' : '内核已停止'}`);
   };
   tray.on('click', () => { if (win && !win.isDestroyed() && win.isVisible()) win.hide(); else showWin(); });
   svc.on('state', refresh);
@@ -69,7 +69,7 @@ function showWin() {
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1220, height: 800, minWidth: 1000, minHeight: 660, backgroundColor: '#f3f5f9', title: 'JiajiaBox',
+    width: 1220, height: 800, minWidth: 1000, minHeight: 660, backgroundColor: '#f3f5f9', title: 'Bear Box',
     autoHideMenuBar: true, show: !process.env.JIAJIA_SHOT_DIR,
     icon: path.join(__dirname, '..', 'assets', 'icon.ico'),
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true },
@@ -83,7 +83,7 @@ function createWindow() {
       e.preventDefault(); win.hide();
       if (!balloonShown) {
         balloonShown = true;
-        try { tray.displayBalloon({ title: 'JiajiaBox 仍在运行', content: '窗口已最小化到系统托盘（屏幕右下角，可能藏在向上的小箭头里）。右键托盘图标可选择退出。' }); } catch { /* older shell */ }
+        try { tray.displayBalloon({ title: 'Bear Box 仍在运行', content: '窗口已最小化到系统托盘（屏幕右下角，可能藏在向上的小箭头里）。右键托盘图标可选择退出。' }); } catch { /* older shell */ }
       }
     }
   });
@@ -107,14 +107,14 @@ const handlers = {
   },
   // ---------- toolbox ----------
   exportBackup: async () => {
-    const file = `JiajiaBox-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    const r = await dialog.showSaveDialog(win, { title: '导出配置备份', defaultPath: file, filters: [{ name: 'JiajiaBox 备份', extensions: ['json'] }] });
+    const file = `BearBox-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    const r = await dialog.showSaveDialog(win, { title: '导出配置备份', defaultPath: file, filters: [{ name: 'Bear Box 备份', extensions: ['json'] }] });
     if (r.canceled || !r.filePath) return { canceled: true };
     fs.writeFileSync(r.filePath, svc.exportBackup(), 'utf8');
     return { ok: true, path: r.filePath };
   },
   importBackup: async () => {
-    const r = await dialog.showOpenDialog(win, { title: '导入配置备份', filters: [{ name: 'JiajiaBox 备份', extensions: ['json'] }], properties: ['openFile'] });
+    const r = await dialog.showOpenDialog(win, { title: '导入配置备份', filters: [{ name: 'Bear Box 备份', extensions: ['json'] }], properties: ['openFile'] });
     if (r.canceled || !r.filePaths[0]) return { canceled: true };
     const content = fs.readFileSync(r.filePaths[0], 'utf8');
     return svc.importBackup(content);
@@ -215,7 +215,7 @@ app.whenReady().then(async () => {
   if (/Rar\$EX|\.rartemp|\\Temp\\7z|\/Temp\/7z/i.test(process.execPath)) {
     dialog.showMessageBox({
       type: 'warning', title: '请先解压再运行', message: '正在从压缩包临时目录里直接运行',
-      detail: 'JiajiaBox.exe 需要旁边的 resources 等文件才能正常工作。请先把整个压缩包解压到一个文件夹（右键压缩包 - 全部解压），再运行解压出来的 JiajiaBox.exe。',
+      detail: 'Bear Box 需要旁边的 resources 等文件才能正常工作。请先把整个压缩包解压到一个文件夹（右键压缩包 - 全部解压），再运行解压出来的程序。',
       buttons: ['知道了'], noLink: true,
     }).catch(() => {});
   }

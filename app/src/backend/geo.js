@@ -180,8 +180,12 @@ async function lookupPurity(ip, { proxy = null, transports = null, timeoutMs = 1
   if (native) score10 += 0.5;
   if (human) score10 += 0.5;
   if (business) score10 -= 0.5;
-  const abRaw = parseFloat(j.intelligence && j.intelligence.abuser_score_raw != null ? j.intelligence.abuser_score_raw : j.abuser_score);
+  const intel = j.intelligence || {};
+  const abRaw = parseFloat(intel.abuser_score_raw != null ? intel.abuser_score_raw : j.abuser_score);
   if (isFinite(abRaw)) { if (abRaw > 0.05) score10 -= 2; else if (abRaw > 0.025) score10 -= 1; else if (abRaw > 0.01) score10 -= 0.5; }
+  const hpRaw = parseFloat(intel.rep_threat != null ? intel.rep_threat : intel.httpbl_threat);
+  const hpPen = (isFinite(hpRaw) && hpRaw > 0) ? (hpRaw <= 25 ? 1 : 2) : 0;
+  score10 -= hpPen;
   if (j.is_crawler) score10 -= 0.5;
   score10 = Math.max(0, Math.min(10, roundHalfUp(score10)));
   const risky = flags.length > 0;
@@ -195,6 +199,9 @@ async function lookupPurity(ip, { proxy = null, transports = null, timeoutMs = 1
     asn: j.asn || null,
     trustScore: j.trust_score,
     redditBlocked: j.reddit_blocked === true,
+    abuserScore: intel.abuser_score_raw || j.abuser_score || '',
+    abuserLevel: intel.abuser_level || '',
+    threats: Array.isArray(intel.threats) ? intel.threats : [],
     aiVerdict: j.ai_verdict ? { label: j.ai_verdict.label, confidence: j.ai_verdict.confidence, reasoning: j.ai_verdict.reasoning } : null,
     rawData: { is_datacenter: j.is_datacenter, isResidential: j.isResidential, is_vpn: j.is_vpn, is_proxy: j.is_proxy, is_tor: j.is_tor, is_abuser: j.is_abuser, is_mobile: j.is_mobile, is_crawler: j.is_crawler, company_type: j.company_type },
     source: 'ip.net.coffee',

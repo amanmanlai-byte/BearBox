@@ -533,6 +533,8 @@ function purityDetail(g, pu) {
     ['所属组织', pu.company || '-'],
     ['ASN', pu.asn ? 'AS' + pu.asn : '-'],
     ['风险标记', pu.flags && pu.flags.length ? pu.flags.join('、') : '（无）'],
+    pu.abuserScore ? ['滥用分', `${pu.abuserScore}${pu.abuserLevel ? '（' + pu.abuserLevel + '）' : ''}`] : null,
+    pu.threats && pu.threats.length ? ['威胁条目', pu.threats.join('、')] : null,
     ['Reddit 封锁', pu.redditBlocked ? '是' : '否'],
     pu.aiVerdict ? ['AI 判定', `${pu.aiVerdict.label}（置信度 ${pu.aiVerdict.confidence}%）— ${pu.aiVerdict.reasoning}`] : null,
   ].filter(Boolean) : [
@@ -574,12 +576,14 @@ PAGES.geo = () => {
   const fillIpCard = (geo, err) => {
     if (err) { exitIp.textContent = '检测失败'; exitTag.style.visibility = 'hidden'; exitLoc.textContent = err; exitMeta.textContent = '来源 ip.sb'; return; }
     exitIp.textContent = geo.ip || '-';
+    exitIp.classList.toggle('long-ip', (geo.ip || '').length > 26);
     exitTag.textContent = geo.country_code || ''; exitTag.style.visibility = geo.country_code ? 'visible' : 'hidden';
     exitLoc.textContent = [geo.city, geo.region, geo.country].filter(Boolean).join(' · ');
     exitMeta.textContent = `检测于 ${new Date().toLocaleTimeString()} · 来源 ip.sb · ${geo.isp || ''}${geo.asn ? ' (AS' + geo.asn + ')' : ''}`;
   };
   const fillDirect = (geo, err) => {
     directIp.textContent = err ? '失败' : (geo.ip || '-');
+    directIp.classList.toggle('long-ip', !err && (geo.ip || '').length > 26);
     directLoc.textContent = err ? err : [geo.country, geo.city].filter(Boolean).join(' · ');
   };
   const nodePurity = h('span', { class: 'purity', style: { display: 'none' },
