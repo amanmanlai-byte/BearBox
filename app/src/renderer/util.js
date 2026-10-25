@@ -93,6 +93,45 @@ function emptyState(icon, title, text, ...actions) {
 }
 const goto = (p) => window.__go(p);
 
+// ---------- node flag emoji (display-only; the original name is never modified) ----------
+const FLAG_CN = [
+  ['香港', '\u{1F1ED}\u{1F1F0}'], ['台湾', '\u{1F1F9}\u{1F1FC}'], ['日本', '\u{1F1EF}\u{1F1F5}'],
+  ['韩国', '\u{1F1F0}\u{1F1F7}'], ['新加坡', '\u{1F1F8}\u{1F1EC}'], ['美国', '\u{1F1FA}\u{1F1F8}'],
+  ['英国', '\u{1F1EC}\u{1F1E7}'], ['德国', '\u{1F1E9}\u{1F1EA}'], ['法国', '\u{1F1EB}\u{1F1F7}'],
+  ['巴西', '\u{1F1E7}\u{1F1F7}'], ['荷兰', '\u{1F1F3}\u{1F1F1}'], ['土耳其', '\u{1F1F9}\u{1F1F7}'],
+  ['俄罗斯', '\u{1F1F7}\u{1F1FA}'], ['印度', '\u{1F1EE}\u{1F1F3}'], ['加拿大', '\u{1F1E8}\u{1F1E6}'],
+  ['澳大利亚', '\u{1F1E6}\u{1F1FA}'], ['澳洲', '\u{1F1E6}\u{1F1FA}'], ['马来西亚', '\u{1F1F2}\u{1F1FE}'],
+  ['马来', '\u{1F1F2}\u{1F1FE}'], ['泰国', '\u{1F1F9}\u{1F1ED}'], ['越南', '\u{1F1FB}\u{1F1F3}'],
+  ['菲律宾', '\u{1F1F5}\u{1F1ED}'], ['印尼', '\u{1F1EE}\u{1F1E9}'], ['阿根廷', '\u{1F1E6}\u{1F1F7}'],
+  ['意大利', '\u{1F1EE}\u{1F1F9}'], ['西班牙', '\u{1F1EA}\u{1F1F8}'], ['瑞典', '\u{1F1F8}\u{1F1EA}'],
+  ['瑞士', '\u{1F1E8}\u{1F1ED}'], ['爱尔兰', '\u{1F1EE}\u{1F1EA}'], ['以色列', '\u{1F1EE}\u{1F1F1}'],
+  ['阿联酋', '\u{1F1E6}\u{1F1EA}'], ['波兰', '\u{1F1F5}\u{1F1F1}'], ['乌克兰', '\u{1F1FA}\u{1F1E6}'],
+  ['蒙古', '\u{1F1F2}\u{1F1F3}'], ['埃及', '\u{1F1EA}\u{1F1EC}'], ['南非', '\u{1F1FF}\u{1F1E6}'],
+  ['墨西哥', '\u{1F1F2}\u{1F1FD}'], ['智利', '\u{1F1E8}\u{1F1F1}'], ['哥伦比亚', '\u{1F1E8}\u{1F1F4}'],
+];
+const FLAG_CODE = [
+  ['HK', '\u{1F1ED}\u{1F1F0}'], ['TW', '\u{1F1F9}\u{1F1FC}'], ['JP', '\u{1F1EF}\u{1F1F5}'],
+  ['KR', '\u{1F1F0}\u{1F1F7}'], ['SG', '\u{1F1F8}\u{1F1EC}'], ['US', '\u{1F1FA}\u{1F1F8}'],
+  ['UK', '\u{1F1EC}\u{1F1E7}'], ['GB', '\u{1F1EC}\u{1F1E7}'], ['DE', '\u{1F1E9}\u{1F1EA}'],
+  ['FR', '\u{1F1EB}\u{1F1F7}'], ['BR', '\u{1F1E7}\u{1F1F7}'], ['NL', '\u{1F1F3}\u{1F1F1}'],
+  ['TR', '\u{1F1F9}\u{1F1F7}'], ['RU', '\u{1F1F7}\u{1F1FA}'], ['IN', '\u{1F1EE}\u{1F1F3}'],
+  ['CA', '\u{1F1E8}\u{1F1E6}'], ['AU', '\u{1F1E6}\u{1F1FA}'], ['MY', '\u{1F1F2}\u{1F1FE}'],
+  ['TH', '\u{1F1F9}\u{1F1ED}'], ['VN', '\u{1F1FB}\u{1F1F3}'], ['PH', '\u{1F1F5}\u{1F1ED}'],
+  ['ID', '\u{1F1EE}\u{1F1E9}'], ['AR', '\u{1F1E6}\u{1F1F7}'], ['IT', '\u{1F1EE}\u{1F1F9}'],
+  ['ES', '\u{1F1EA}\u{1F1F8}'],
+];
+// Detect the country flag for a node name. Returns '' if no match or a flag is already present.
+function nodeFlag(name) {
+  if (!name) return '';
+  if (/\u{1F1E6}-\u{1F1FF}/u.test(name)) return '';
+  for (const pair of FLAG_CN) { if (name.includes(pair[0])) return pair[1]; }
+  const m = /^[A-Z]{2}(?=[\d\s\-_\u00b7]|$)/.exec(name.trim());
+  if (m) { for (const pair of FLAG_CODE) { if (pair[0] === m[0]) return pair[1]; } }
+  return '';
+}
+// Node display name: flag prefix + original tag (the original is never modified).
+function nodeDisplayName(tag) { const f = nodeFlag(tag); return f ? f + ' ' + tag : tag; }
+
 /**
  * Preserve the focused input across a full page re-render.
  * Elements opt in with data-keep="key"; call keepFocus.save() before replacing

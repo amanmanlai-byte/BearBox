@@ -20,7 +20,7 @@ const X = {
   logLevel: 'all', logSearch: '', logFollow: true,
   connSearch: '', connNet: 'all',
 };
-let page = 'home'; let view = null; let footRefs = null; let lastSig = '';
+let page = 'home'; let view = null; let footRefs = null; let lastSig = ''; let renderDebounce = null;
 
 const isRunning = () => X.S && X.S.core.state === 'running';
 const modeName = (m) => (m === 'global' ? '全局' : '规则');
@@ -69,7 +69,7 @@ function renderNav() {
   foot.replaceChildren(
     h('div', { class: 'row' }, h('span', { class: 'dot ' + (st === 'running' ? 'run' : st === 'stopped' ? '' : 'wait') }),
       h('b', { ref: 'state' }, { stopped: '内核已停止', starting: '正在启动…', running: '内核运行中', stopping: '正在停止…' }[st] || '内核已停止')),
-    h('div', { class: 'row', title: sel ? '当前节点' : '' }, h('span', { class: 't', ref: 'node' }, sel ? sel.tag : '未选择节点')),
+    h('div', { class: 'row', title: sel ? '当前节点' : '' }, h('span', { class: 't', ref: 'node' }, sel ? nodeDisplayName(sel.tag) : '未选择节点')),
     h('div', { class: 'row', ref: 'speed', style: { visibility: st === 'running' ? 'visible' : 'hidden' } }, '↓ ', h('b', { ref: 'down' }, '-'), '  ↑ ', h('b', { ref: 'up' }, '-')),
     h('div', { class: 'row' }, h('span', { class: 't', title: S && S.core.binary ? S.core.binary : '' }, (S && S.core.version ? S.core.version.replace(/^sing-box version /, 'sing-box ') : '未找到内核')),
       h('span', { class: 'sp' }),
@@ -163,7 +163,9 @@ function applyState(S) {
   }
   // latency-only changes (a test run is in progress): update in place, no rebuild
   if (stateSig(S) === lastSig && view && view.state) { renderNav(); view.state(S); return; }
-  render();
+  // debounce rapid state changes: multiple pushes within 30ms result in one render
+  clearTimeout(renderDebounce);
+  renderDebounce = setTimeout(() => render(), 30);
 }
 
 window.jj.on('state', applyState);

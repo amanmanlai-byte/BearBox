@@ -39,7 +39,7 @@ PAGES.home = () => {
     onclick: () => act(() => api(running ? 'stop' : 'start'), running ? '内核已停止' : '内核已启动') }, svgIcon(ICONS.power));
 
   const nodeSel = h('select', { 'aria-label': '当前节点', disabled: S.nodes.length === 0, onchange: (e) => act(() => api('selectNode', { id: e.target.value }), '已切换节点') },
-    S.nodes.map((n) => h('option', { value: n.id }, n.tag)));
+    S.nodes.map((n) => h('option', { value: n.id }, nodeDisplayName(n.tag))));
   nodeSel.value = S.selectedId || '';
 
   let subLine;
@@ -217,7 +217,7 @@ PAGES.nodes = () => {
   const rowEls = list.map((n) => {
     const tr = h('tr', { class: 'pick' + (n.id === S.selectedId ? ' sel' : ''), 'data-nid': n.id, onclick: () => act(() => api('selectNode', { id: n.id }), `已切换到 ${n.tag}`) },
       h('td', { style: { width: '34px' } }, h('span', { class: 'radio' + (n.id === S.selectedId ? ' on' : '') })),
-      h('td', { title: n.tag }, h('div', { style: { overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '260px', whiteSpace: 'nowrap' } }, n.tag),
+      h('td', { title: n.tag }, h('div', { style: { overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '260px', whiteSpace: 'nowrap' } }, nodeDisplayName(n.tag)),
         grouped ? null : (n.subId ? h('div', { class: 'mut2', style: { fontSize: '11px' } }, subName(n.subId)) : null)),
       h('td', {}, h('span', { class: 'tag' }, n.type)),
       h('td', { class: 'mono mut2' }, `${n.server}:${n.port}`),
