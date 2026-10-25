@@ -28,17 +28,18 @@ test('lookup uses the proxy when the core is running, caches to disk', async () 
   assert.equal(t.calls.proxy.length, 1);
 });
 
-test('lookup goes direct without a proxy and falls back when the proxy fails', async () => {
+test('lookup goes direct without a proxy; geoSelf via proxy does NOT fall back to direct', async () => {
   const t = mkT();
   const svc = new GeoService({ userData: tmp(), getProxy: () => null, transports: t.transports });
   await svc.lookup('1.1.1.1');
   assert.equal(t.calls.direct.length, 1); assert.equal(t.calls.proxy.length, 0);
 
+  // self() through a failing proxy must throw (no silent direct fallback that would
+  // mislabel the user's real IP as the exit)
   const t2 = mkT(); t2.calls.failProxy = true;
   const svc2 = new GeoService({ userData: tmp(), getProxy: () => ({ host: 'x', port: 1 }), transports: t2.transports });
-  const g = await svc2.lookup('9.9.9.9');
-  assert.equal(g.ip, '1.2.3.4');
-  assert.equal(t2.calls.proxy.length, 1); assert.equal(t2.calls.direct.length, 1);
+  await assert.rejects(svc2.self(), /proxy down/);
+  assert.equal(t2.calls.proxy.length, 1); assert.equal(t2.calls.direct.length, 0, 'no silent direct fallback');
 });
 
 test('expired cache entries are refetched', async () => {

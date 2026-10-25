@@ -214,8 +214,10 @@ class GeoService {
     const proxy = forceDirect ? null : this.getProxy();
     let raw;
     if (proxy) {
-      try { raw = await this.t.viaProxy(GEO_HOST, reqPath, proxy.host, proxy.port); }
-      catch (e) { raw = await this.t.direct(GEO_HOST, reqPath); } // proxy path failed: fall back to direct
+      // proxy path with NO silent direct fallback: a direct fallback would return the
+      // user's real IP mislabeled as the "exit" - that is exactly what must not happen.
+      // If the proxy path fails we report the error; the caller decides what to show.
+      raw = await this.t.viaProxy(GEO_HOST, reqPath, proxy.host, proxy.port);
     } else raw = await this.t.direct(GEO_HOST, reqPath);
     const j = JSON.parse(raw);
     if (!j || typeof j.latitude !== 'number' || typeof j.longitude !== 'number') throw new Error('返回数据缺少坐标');

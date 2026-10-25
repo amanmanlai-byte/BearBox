@@ -604,32 +604,6 @@ PAGES.geo = () => {
   };
   // Exit-country view: while connected, the EXIT location (state.exit) is what matters;
   // the entry server (state.node) is only context. Display exits-first.
-  const nodeInfo = (() => {
-    const main = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', minHeight: '58px' } }, h('span', { class: 'mut2' }, '连接节点后显示出口国家'));
-    return { el: h('div', { class: 'card tile' }, h('div', { class: 'k' }, '节点出口国家', h('span', { class: 'hint' }, '网站看到的国家')), main), main };
-  })();
-  const fillExitNode = () => {
-    const el = nodeInfo.main; el.replaceChildren();
-    const sel = X.S.nodes.find((n) => n.id === X.S.selectedId);
-    if (!isRunning()) {
-      el.append(h('span', { class: 'mut2' }, '启动内核并连接节点后，这里显示该节点的出口国家与纯净度。'));
-      showPurity(null); return;
-    }
-    if (ok(state.exit)) {
-      el.append(h('b', { style: { fontSize: '15px' } }, state.exit.country || '-'),
-        h('span', { class: 'mut' }, [state.exit.city, state.exit.region].filter(Boolean).join(' · ') || ''),
-        h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, `出口 IP ${state.exit.ip}` + (sel ? ` · 节点：${sel.tag}` : '')));
-      if (state.node && !state.node.error) {
-        el.append(h('span', { class: 'mut2', style: { fontSize: '11px' } }, `入口机房：${state.node.country || ''}${state.node.city ? ' · ' + state.node.city : ''}（${state.node.isp || ''}）`));
-      }
-    } else {
-      el.append(h('span', { class: 'mut2' }, '正在查询出口位置…'));
-    }
-    // purity chip reflects the EXIT IP when available, otherwise the node server IP
-    if (ok(state.exit) && state.exit.purity) showPurity(state.exit.purity);
-    else if (state.node && state.node.purity) showPurity(state.node.purity);
-    else showPurity(null);
-  };
   const purityBtn = h('button', { class: 'btn small', title: '对当前出口 IP 运行纯净度检测（ip.net.coffee 风控数据）',
     onclick: (e) => act(async () => {
       if (!isRunning()) throw new Error('请先启动内核并连接节点');
@@ -651,6 +625,39 @@ PAGES.geo = () => {
       purityDetail(state.exit, pu);
       return pu;
     }, (pu) => `纯净度：${pu.score}（${pu.level}）`, e.currentTarget) }, '纯净度检测');
+
+  const nodeInfo = (() => {
+    const main = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', minHeight: '58px' } }, h('span', { class: 'mut2' }, '连接节点后显示出口国家'));
+    return { el: h('div', { class: 'card tile' }, h('div', { class: 'k' }, '节点出口国家', h('span', { class: 'hint' }, '网站看到的国家')), main,
+      h('div', { style: { marginTop: '8px' } }, purityBtn)), main };
+  })();
+  const fillExitNode = () => {
+    const el = nodeInfo.main; el.replaceChildren();
+    const sel = X.S.nodes.find((n) => n.id === X.S.selectedId);
+    if (!isRunning()) {
+      el.append(h('span', { class: 'mut2' }, '启动内核并连接节点后，这里显示该节点的出口国家与纯净度。'));
+      showPurity(null); return;
+    }
+    if (state.exit && state.exit.error) {
+      el.append(h('span', { class: 'err' }, '出口查询失败：' + state.exit.error),
+        h('span', { class: 'mut2', style: { fontSize: '11px' } }, '经代理查询出口位置失败。请检查节点是否可用。'));
+      showPurity(null); return;
+    }
+    if (ok(state.exit)) {
+      el.append(h('b', { style: { fontSize: '15px' } }, state.exit.country || '-'),
+        h('span', { class: 'mut' }, [state.exit.city, state.exit.region].filter(Boolean).join(' · ') || ''),
+        h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, `出口 IP ${state.exit.ip}` + (sel ? ` · 节点：${sel.tag}` : '')));
+      if (state.node && !state.node.error) {
+        el.append(h('span', { class: 'mut2', style: { fontSize: '11px' } }, `入口机房：${state.node.country || ''}${state.node.city ? ' · ' + state.node.city : ''}（${state.node.isp || ''}）`));
+      }
+    } else {
+      el.append(h('span', { class: 'mut2' }, '正在查询出口位置…'));
+    }
+    // purity chip reflects the EXIT IP when available, otherwise the node server IP
+    if (ok(state.exit) && state.exit.purity) showPurity(state.exit.purity);
+    else if (state.node && state.node.purity) showPurity(state.node.purity);
+    else showPurity(null);
+  };
   void checkedAt;
 
   // ---- dual view: flat 2D map + 3D globe
@@ -720,7 +727,13 @@ PAGES.geo = () => {
         if (!alive) return;
         state.exit = g; GEO_CACHE.exit = g; GEO_CACHE.exitAt = Date.now();
         fillIpCard(g);
-      } catch (e) { if (alive && !exitFresh()) { state.exit = { error: e.message }; fillIpCard(null, e.message); } }
+        fillExitNode(); // exit card updates as soon as the exit geo is known
+      } catch (e) {
+        if (!alive) return;
+        state.exit = { error: e.message }; GEO_CACHE.exit = null; GEO_CACHE.exitAt = 0;
+        fillIpCard(null, e.message);
+        fillExitNode(); // exit card shows the error honestly (no direct fallback)
+      }
       draw();
     })();
     const directP = (async () => {
@@ -833,7 +846,7 @@ PAGES.geo = () => {
       h('div', { class: 'ipside' },
         h('div', { class: 'k', style: { fontSize: '12px', color: 'var(--ink-3)' } }, '直连公网'),
         directIp, directLoc)),
-    running ? h('div', { class: 'grid cols-3', style: { marginBottom: '14px' } }, nodeInfo.el) : h('div', { class: 'note', style: { marginBottom: '14px', textAlign: 'center', padding: '16px' } }, '启动内核并连接节点后，这里会显示节点 IP 位置与纯净度检测'),
+    h('div', { class: 'grid cols-3', style: { marginBottom: '14px' } }, nodeInfo.el),
     h('div', { class: 'card' }, h('h2', {}, '世界地图', h('span', { class: 'hint' }, '平面图与 3D 地球可切换')), mapHolder, globeBox, legend));
 
   return {
