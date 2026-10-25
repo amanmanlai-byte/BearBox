@@ -129,11 +129,16 @@ function assessPurity(geo) {
   const residentialHits = ['telecom', 'mobile communications', 'china telecom', 'china unicom', 'china mobile', 'comcast',
     'verizon', 'at&t', 'deutsche telekom', 'orange', 'vodafone', 'british telecom', 'kddi', 'ntt communications',
     'sk broadband', 'kt corp', 'charter', 'cox comm', 'telefonica', 'telekom', 'cable', 'isp', 'internet access'].filter((k) => text.includes(k));
-  let score; let level; let basis;
-  if (dcHits.length && dcHits.length >= residentialHits.length) { score = 40; level = '机房'; basis = `ISP/ASN 命中机房/云商标记（${dcHits[0]}…）`; }
-  else if (residentialHits.length) { score = 95; level = '住宅'; basis = `ISP/ASN 为运营商网络（${residentialHits[0]}…）`; }
-  else { score = 72; level = '一般'; basis = 'ISP/ASN 无法明确归类'; }
-  return { score, level, basis, note: '基于 ip.sb 的 ISP/ASN 归属推断，非商业风控数据库评分' };
+  let score; let level; let basis; let hits;
+  if (dcHits.length && dcHits.length >= residentialHits.length) { score = 40; level = '机房'; hits = dcHits; basis = `ISP/ASN 命中机房/云商标记（${dcHits.slice(0, 3).join('、')}）`; }
+  else if (residentialHits.length) { score = 95; level = '住宅'; hits = residentialHits; basis = `ISP/ASN 为运营商网络（${residentialHits.slice(0, 3).join('、')}）`; }
+  else { score = 72; level = '一般'; hits = []; basis = 'ISP/ASN 无法明确归类'; }
+  return {
+    score, level, basis, hits,
+    isp: geo.isp || '', org: geo.organization || '', asnOrg: geo.asn_organization || '',
+    asn: geo.asn || null,
+    note: '基于 ip.sb 的 ISP/ASN 归属推断，非商业风控数据库评分。可在 ip.sb 查证此 IP。',
+  };
 }
 
 class GeoService {

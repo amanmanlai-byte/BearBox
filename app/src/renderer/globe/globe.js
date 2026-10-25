@@ -325,7 +325,7 @@ function initGlobe(container) {
   function gesture(){const values=pointers.values(),a=values.next().value,b=values.next().value;return a&&b?{x:(a[0]+b[0])/2,y:(a[1]+b[1])/2,distance:Math.hypot(b[0]-a[0],b[1]-a[1]),angle:Math.atan2(b[1]-a[1],b[0]-a[0])}:null;}
   function dragAngles(dx,dy){const cr=Math.cos(targetRoll),sr=Math.sin(targetRoll),scale=Math.PI*2/Math.max(120,Math.min(canvas.clientWidth,canvas.clientHeight)*2);return [(dx*cr-dy*sr)*scale,(dx*sr+dy*cr)*scale];}
   canvas.addEventListener('pointerdown',event=>{
-    if(paused)return;event.preventDefault();canvas.setPointerCapture(event.pointerId);cancelSpinClock();
+    if(paused)return;event.preventDefault();try{canvas.setPointerCapture(event.pointerId);}catch(_){/* capture is an optimization; drags must work without it */}cancelSpinClock();
     if(pointers.size===0){cameraTween=null;targetYaw=yaw;targetPitch=pitch;targetZoom=zoom;targetRoll=roll;travel=0;multiTouch=false;velocityYaw=velocityPitch=0;}
     pointers.set(event.pointerId,[event.clientX,event.clientY]);
     if(pointers.size>1){multiTouch=true;previousPinch=pinchDistance();previousGesture=gesture();velocityYaw=velocityPitch=0;}

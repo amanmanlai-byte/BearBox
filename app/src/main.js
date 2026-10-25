@@ -236,6 +236,28 @@ async function runShots(dir) {
   if (process.env.JIAJIA_PROBE) {
     try { console.log('PROBE', JSON.stringify(await win.webContents.executeJavaScript(process.env.JIAJIA_PROBE))); } catch (e) { console.log('PROBE_ERR', e.message); }
   }
+  // JIAJIA_INPUT_TEST: drive REAL trusted mouse input (sendInputEvent) into the 3D globe and
+  // report whether the camera actually rotated - synthetic events proved insufficient for this.
+  if (process.env.JIAJIA_INPUT_TEST) {
+    try {
+      const prep = await win.webContents.executeJavaScript(`(async()=>{ window.__go('geo'); await new Promise(r=>setTimeout(r,2000));
+        const b=[...document.querySelectorAll('.page-head .seg button')].find(x=>x.textContent.includes('3D')); if(b)b.click();
+        await new Promise(r=>setTimeout(r,3500));
+        const cv=document.querySelector('.globe-view canvas#globe'); if(!cv) return null;
+        const r=cv.getBoundingClientRect();
+        return { yaw: window.__globe ? window.__globe.inspect().yaw : null, x: Math.round(r.left + r.width*0.4), y: Math.round(r.top + r.height*0.5) }; })()`);
+      if (!prep) { console.log('INPUT_TEST_ERR', 'no globe canvas'); }
+      else {
+        const send = (type, x, y) => win.webContents.sendInputEvent({ type, x, y, button: 'left', clickCount: 1 });
+        send('mouseDown', prep.x, prep.y);
+        for (let i = 0; i < 14; i++) { send('mouseMove', prep.x + (i + 1) * 16, prep.y + (i + 1) * 5); await new Promise((r) => setTimeout(r, 20)); }
+        send('mouseUp', prep.x + 15 * 16, prep.y + 15 * 5);
+        await new Promise((r) => setTimeout(r, 1200));
+        const after = await win.webContents.executeJavaScript(`window.__globe ? window.__globe.inspect().yaw : null`);
+        console.log('INPUT_TEST', JSON.stringify({ before: prep.yaw, after, moved: after != null && prep.yaw != null && Math.abs(after - prep.yaw) > 0.05, at: [prep.x, prep.y] }));
+      }
+    } catch (e) { console.log('INPUT_TEST_ERR', e.message); }
+  }
   for (const page of (process.env.JIAJIA_SHOT_PAGES || 'home,nodes,subs,rules,conns,geo,stats,logs,toolbox,settings').split(',')) {
     await win.webContents.executeJavaScript(`window.__go && window.__go(${JSON.stringify(page)})`);
     await new Promise((r) => setTimeout(r, Number(process.env.JIAJIA_SHOT_WAIT || 700)));

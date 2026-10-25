@@ -516,6 +516,28 @@ PAGES.conns = () => {
   };
 };
 
+function purityDetail(g, pu) {
+  if (!pu) return;
+  const rows = [
+    ['被检测 IP', g && g.ip || '-'],
+    ['国家/地区', [g && g.country, g && g.city].filter(Boolean).join(' · ') || '-'],
+    ['ISP', pu.isp || '-'],
+    ['ASN 组织', [pu.asnOrg, pu.asn ? 'AS' + pu.asn : null].filter(Boolean).join(' · ') || '-'],
+    ['命中关键词', pu.hits && pu.hits.length ? pu.hits.join('、') : '（无命中，无法归类）'],
+    ['评分', `${pu.score}（${pu.level}）`],
+  ];
+  modal(`IP 纯净度详情`, h('div', {},
+    h('div', { class: 'toolbar', style: { marginBottom: '14px' } },
+      h('span', { class: 'purity ' + (pu.score >= 85 ? 'good' : pu.score >= 60 ? 'mid' : 'bad'), style: { display: 'inline-flex' } },
+        h('b', { class: 'purity-score' }, String(pu.score)), h('span', { class: 'purity-label' }, pu.level))),
+    h('table', { class: 'tbl' }, h('tbody', {}, rows.map(([k, v]) => h('tr', {}, h('td', { style: { width: '120px', color: 'var(--ink-3)' } }, k), h('td', { class: 'mono', style: { fontSize: '11.5px' } }, v))))),
+    h('div', { class: 'note', style: { marginTop: '12px' } },
+      pu.note, h('br'),
+      '评分规则：ISP/ASN 含机房/云商关键词 → 40 分（机房）；含运营商关键词 → 95 分（住宅）；两者皆无 → 72 分（一般）。', h('br'),
+      '你可以在浏览器打开 https://ip.sb/', g && g.ip ? '/' + g.ip : '', ' 自行查证此 IP 的归属信息。')),
+    (close) => [h('button', { class: 'btn primary', onclick: close }, '知道了')]);
+}
+
 // ================================================================ geo map
 let WORLD_GEO = null; // world GeoJSON loaded once per app run
 PAGES.geo = () => {
@@ -572,7 +594,8 @@ PAGES.geo = () => {
       if (!g.purity) throw new Error('未能取得纯净度评估');
       showPurity(g.purity);
       return g.purity;
-    }, (pu) => `节点纯净度：${pu.score}（${pu.level}）`, e.currentTarget) }, '纯净度检测');
+    }, (pu) => { purityDetail(g_, pu); return `节点纯净度：${pu.score}（${pu.level}）`; }, e.currentTarget) }, '纯净度检测');
+  let g_ = null; // last geo result for the detail modal
 
   const nodeInfo = (() => {
     const main = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', minHeight: '58px' } }, h('span', { class: 'mut2' }, '查询中…'));
@@ -645,7 +668,7 @@ PAGES.geo = () => {
       const all = await api('geoNodes', { servers: [sel.server] });
       if (!alive) return;
       const g = all[sel.server];
-      if (g && !g.error) { state.node = g; fillNode(g, h('span', { class: 'mut2', style: { fontSize: '11px' } }, sel.tag)); }
+      if (g && !g.error) { state.node = g; g_ = g; fillNode(g, h('span', { class: 'mut2', style: { fontSize: '11px' } }, sel.tag)); }
       else { state.node = null; fillNode({ error: (g && g.error) || '查询失败' }); }
     } catch (e) { if (alive) fillNode({ error: e.message }); }
     draw();
@@ -680,7 +703,7 @@ PAGES.geo = () => {
       mapHolder.style.display = 'none';
       globeBox.style.display = '';
       globeBox.classList.remove('viewfade'); void globeBox.offsetWidth; globeBox.classList.add('viewfade');
-      if (!globe) globe = initGlobe(globeBox); // created lazily on first use
+      if (!globe) { globe = initGlobe(globeBox); window.__globe = globe; } // lazily created; __globe kept as a diagnostics hook
       globeFeed();
     }
   };

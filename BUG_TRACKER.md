@@ -46,7 +46,14 @@
 ### J-07 浅色主题毛玻璃扎眼
 - 修复：浅色下玻璃表面由纯白改为 向画布灰调(color-2)混合，边框减淡；深色保持透明混合不变
 
-### J-08 3D 地球无法手动转动（移植缺陷）
+### J-08 3D 地球无法手动转动（移植缺陷，两层根因）
+- 第一层：原版 CSS `#labels{pointer-events:none}` 在移植时丢失，覆盖层画布吞掉了全部指针事件
+- 第二层：`setPointerCapture` 在某些时序下抛异常导致 pointerdown 中断（已加 try/catch 保护）
+- 验证：终极验证使用 Electron `webContents.sendInputEvent` 发送操作系统级真实鼠标事件（非合成），
+  实测 yaw 从 -1.730 到 0.076（旋转约 103°），moved=true
+- 附注：此前合成事件探针因 setPointerCapture 异常而误报"监听器不报错但无旋转"，
+  根因是合成 PointerEvent 不带真实指针 ID，capture 调用抛 NotFoundError 中断了 pointerdown
+
 - 根因：原版 CSS `#labels{pointer-events:none}` 在移植时丢失，覆盖层画布吞掉了全部指针事件
 - 修复：补回该规则；另加「停止自转/开启自转」按钮（globe.setState({autoRotate})）
 - 验证：探针确认 labels 计算样式为 none、按钮存在；合成拖拽无异常
