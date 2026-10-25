@@ -153,21 +153,19 @@ const handlers = {
   },
   // ---------- wallpaper ----------
   pickWallpaper: async () => {
-    const r = await dialog.showOpenDialog(win, { title: '选择壁纸图片', filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp'] }], properties: ['openFile'] });
+    const r = await dialog.showOpenDialog(win, { title: '选择壁纸图片', filters: [{ name: '图片', extensions: ['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif', 'avif', 'ico', 'tif', 'tiff'] }], properties: ['openFile'] });
     if (r.canceled || !r.filePaths[0]) return { canceled: true };
     const src = r.filePaths[0];
-    const m = /\.(jpg|jpeg|png|webp|bmp)$/i.exec(src);
-    if (!m) throw new Error('不支持的图片格式');
-    const dir = app.getPath('userData');
-    const dest = path.join(dir, 'wallpaper.' + m[1].toLowerCase());
-    fs.copyFileSync(src, dest);
-    for (const f of fs.readdirSync(dir)) if (/^wallpaper\./.test(f) && path.join(dir, f) !== dest) { try { fs.unlinkSync(path.join(dir, f)); } catch { /* ignore */ } }
-    await svc.setSettings({ wallpaper: dest });
-    return { ok: true, path: dest };
+    // read as base64 data URI - bypasses all file:// path encoding issues on Windows
+    const buf = fs.readFileSync(src);
+    if (buf.length > 30 * 1024 * 1024) throw new Error('图片超过 30MB，请压缩后再试');
+    const ext = (path.extname(src) || '.png').slice(1).toLowerCase();
+    const mime = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp', bmp: 'image/bmp', gif: 'image/gif', avif: 'image/avif', ico: 'image/x-icon', tif: 'image/tiff', tiff: 'image/tiff' }[ext] || 'image/png';
+    const dataUri = `data:${mime};base64,${buf.toString('base64')}`;
+    await svc.setSettings({ wallpaper: dataUri });
+    return { ok: true };
   },
   clearWallpaper: async () => {
-    const dir = app.getPath('userData');
-    for (const f of fs.readdirSync(dir)) if (/^wallpaper\./.test(f)) { try { fs.unlinkSync(path.join(dir, f)); } catch { /* ignore */ } }
     await svc.setSettings({ wallpaper: '' });
     return { ok: true };
   },

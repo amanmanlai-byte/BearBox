@@ -10,7 +10,7 @@ const { SystemProxy } = require('./sysproxy');
 const { GeoService, resolveHost } = require('./geo');
 
 // Settings that only affect the UI or app shell; changing them must not restart a running core.
-const NO_RESTART_KEYS = ['setSystemProxy', 'autoStartCore', 'connectionTestURL', 'testConcurrency', 'theme', 'closeToTray', 'autoUpdateSubsMin', 'wallpaper', 'wallpaperOpacity', 'wallpaperVeil', 'wallpaperBlur', 'glassEnabled', 'glassOpacity'];
+const NO_RESTART_KEYS = ['setSystemProxy', 'autoStartCore', 'connectionTestURL', 'testConcurrency', 'theme', 'closeToTray', 'autoUpdateSubsMin', 'wallpaper', 'wallpaperOpacity', 'wallpaperVeil', 'wallpaperBlur', 'glassEnabled', 'glassOpacity', 'fontColor'];
 const LEGACY_TEST_URL = 'https://cp.cloudflare.com/generate_204'; // default before v0.2.2
 
 class AppService extends EventEmitter {

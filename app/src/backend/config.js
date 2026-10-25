@@ -32,6 +32,7 @@ const DEFAULT_SETTINGS = {
   wallpaperBlur: 0,            // px blur applied to the wallpaper
   glassEnabled: false,         // frosted glass effect on cards/sidebar
   glassOpacity: 0.6,           // card background opacity under the glass effect (text stays solid)
+  fontColor: '',                // custom text color ('' = use theme default), hex like '#e8eaf0'
 };
 
 function parseDnsAddress(addr, tag, extra = {}) {

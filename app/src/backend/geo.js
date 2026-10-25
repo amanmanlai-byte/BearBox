@@ -166,19 +166,31 @@ async function lookupPurity(ip, { proxy = null, transports = null, timeoutMs = 1
   if (j.is_abuser) flags.push('历史滥用记录');
   if (j.is_crawler) flags.push('爬虫标记');
   const type = j.is_datacenter ? '机房/云商' : j.isResidential ? '住宅' : j.is_mobile ? '移动蜂窝' : j.company_type || '未知';
-  let score = typeof j.trust_score === 'number' ? j.trust_score : null;
-  if (score == null) {
-    // derive from flags if trust_score is missing
-    score = 80;
-    if (j.is_datacenter) score -= 25;
-    if (j.is_vpn || j.is_proxy) score -= 30;
-    if (j.is_tor) score -= 40;
-    if (j.is_abuser) score -= 20;
-    score = Math.max(0, Math.min(100, score));
-  }
-  const level = flags.length > 0 ? '风险' : type === '住宅' ? '纯净' : type.includes('机房') ? '机房' : '一般';
+  // ip.net.coffee displays purity on a 0-10 scale: base = roundHalfUp(trust_score / 10),
+  // then penalties (datacenter -2, broadcast -1, business -0.5, abuser -0.5..2, honeypot -1..2, crawler -0.5),
+  // clamped 0-10; risk caps at 9. This replicates their visible scoring.
+  const trust = typeof j.trust_score === 'number' ? j.trust_score : 50;
+  const roundHalfUp = (v) => Math.round(v * 2) / 2;
+  let score10 = roundHalfUp(trust / 10);
+  const dc = !!(j.is_datacenter || j.company_type === 'hosting' || j.asn_kind === 'hosting');
+  if (dc) score10 -= 2;
+  const native = !!(j.isResidential && !dc);
+  const human = !!(j.isResidential || j.is_mobile);
+  const business = !!(j.company_type === 'business');
+  if (native) score10 += 0.5;
+  if (human) score10 += 0.5;
+  if (business) score10 -= 0.5;
+  const abRaw = parseFloat(j.intelligence && j.intelligence.abuser_score_raw != null ? j.intelligence.abuser_score_raw : j.abuser_score);
+  if (isFinite(abRaw)) { if (abRaw > 0.05) score10 -= 2; else if (abRaw > 0.025) score10 -= 1; else if (abRaw > 0.01) score10 -= 0.5; }
+  if (j.is_crawler) score10 -= 0.5;
+  score10 = Math.max(0, Math.min(10, roundHalfUp(score10)));
+  const risky = flags.length > 0;
+  if (risky && score10 > 9) score10 = 9;
+  // convert to 0-100 for our UI display (matching ip.net.coffee's visual percentage)
+  const score = Math.round(score10 * 10);
+  const level = risky ? '风险' : score10 >= 8 ? '纯净' : dc ? '机房' : score10 >= 5 ? '一般' : '较低';
   return {
-    score, level, flags, type,
+    score, level, flags, type, score10,
     company: j.company_name || j.asOrganization || '',
     asn: j.asn || null,
     trustScore: j.trust_score,

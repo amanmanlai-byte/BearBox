@@ -42,7 +42,15 @@ function stateSig(S) {
 }
 // sig fields that a toolbox export/import changes; the page itself re-renders via normal actions
 
+let navRebuildTimer = null;
 function renderNav() {
+  // during a test run the state pushes are frequent; throttle nav rebuilds to avoid sidebar flicker
+  if (X.S && X.S.testing === true) {
+    if (navRebuildTimer) return;
+    navRebuildTimer = setTimeout(() => { navRebuildTimer = null; renderNav(); }, 1500);
+    return;
+  }
+  clearTimeout(navRebuildTimer); navRebuildTimer = null;
   const nav = document.getElementById('nav');
   nav.replaceChildren(...NAV.map(([id, label, icon]) => h('button', { class: id === page ? 'on' : '', onclick: () => go(id), 'aria-current': id === page ? 'page' : null }, svgIcon(icon), label)));
   // sidebar footer: live status, rebuilt only on structural changes; tick updates go through footRefs
@@ -102,14 +110,27 @@ function applySkin() {
   const on = !!s.wallpaper;
   document.body.classList.toggle('wallpaper', on);
   const wp = document.getElementById('wp');
-  if (on) wp.style.backgroundImage = `url("file:///${String(s.wallpaper).replace(/\\/g, '/').split('/').map(encodeURI).join('/')}")`;
-  else wp.style.backgroundImage = '';
+  if (on) {
+    // data URI (base64) works directly; legacy file paths use file://
+    const ws = String(s.wallpaper);
+    if (ws.startsWith('data:')) wp.style.backgroundImage = `url("${ws}")`;
+    else wp.style.backgroundImage = `url("file:///${ws.replace(/\\/g, '/').split('/').map(encodeURI).join('/')}")`;
+  } else wp.style.backgroundImage = '';
   document.documentElement.style.setProperty('--wp-o', num(s.wallpaperOpacity, 0.35));
   document.documentElement.style.setProperty('--wp-veil', num(s.wallpaperVeil, 0.55));
   document.documentElement.style.setProperty('--wp-blur', num(s.wallpaperBlur, 0) + 'px');
   // frosted glass (independent opacity; text color stays solid)
   document.body.classList.toggle('glass', !!s.glassEnabled);
   document.documentElement.style.setProperty('--glass-pct', Math.round(num(s.glassOpacity, 0.6) * 100) + '%');
+  // custom font color: override --ink directly (removing restores the theme default)
+  const fc = String(s.fontColor || '').trim();
+  if (/^#[0-9a-fA-F]{3,8}$/.test(fc)) {
+    document.documentElement.style.setProperty('--ink', fc);
+    document.documentElement.style.setProperty('--ink-2', fc); // secondary text follows
+  } else {
+    document.documentElement.style.removeProperty('--ink');
+    document.documentElement.style.removeProperty('--ink-2');
+  }
 }
 
 function applyState(S) {

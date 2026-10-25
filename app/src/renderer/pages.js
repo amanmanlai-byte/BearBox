@@ -261,7 +261,11 @@ PAGES.nodes = () => {
   // 「URL 测速全部」在测速进行中变为「停止测速」（后端可中断，队列中的节点被丢弃）
   const mkTestBtn = (testing) => testing
     ? h('button', { class: 'btn danger', onclick: (e) => act(() => api('stopTestNodes'), undefined, e.currentTarget) }, '停止测速')
-    : h('button', { class: 'btn primary', disabled: S.nodes.length === 0, onclick: (e) => act(() => api('testNodes', {}), (r) => r.stopped ? `测速已停止（完成 ${r.done}/${r.count}）` : r.mode === 'url' ? `URL 测速完成（${r.count} 个节点，并发 ${S.settings.testConcurrency}）` : `内核未能启动，已降级为 TCP 连接测试（${r.error || '未知原因'}）`, e.currentTarget) }, 'URL 测速全部');
+    : h('button', { class: 'btn primary', disabled: S.nodes.length === 0, onclick: (e) => {
+        // respect the subscription filter: "all" tests everything, a specific sub tests only that sub
+        const ids = X.nodeSubFilter === 'all' ? undefined : S.nodes.filter((n) => n.subId === X.nodeSubFilter).map((n) => n.id);
+        act(() => api('testNodes', ids ? { ids } : {}), (r) => r.stopped ? `测速已停止（完成 ${r.done}/${r.count}）` : r.mode === 'url' ? `URL 测速完成（${r.count} 个节点，并发 ${S.settings.testConcurrency}）` : `内核未能启动，已降级为 TCP 连接测试（${r.error || '未知原因'}）`, e.currentTarget);
+      } }, 'URL 测速全部');
   const tbody = body.querySelector ? body.querySelector('tbody') : null;
   return {
     el: h('div', { class: 'page' }, pageHead('节点', `${S.nodes.length} 个节点 · 点击行切换当前节点`, testUrlSelect(), search, subSel, sortSel, mkTestBtn(S.testing === true)), distCard, body),
@@ -278,7 +282,9 @@ PAGES.nodes = () => {
         const order = S2.nodes.slice().sort((a, b) => (a.latency ?? 1e9) - (b.latency ?? 1e9)).map((n) => n.id);
         for (const id of order) { const tr = tbody.querySelector(`tr[data-nid="${CSS.escape(id)}"]`); if (tr) tbody.appendChild(tr); }
       }
-      refreshDist(S2.nodes);
+      // during a running test, only refresh the donut every ~2s (each node finishing triggers state)
+      if (S2.testing !== true) refreshDist(S2.nodes);
+      else { clearTimeout(refreshDist._t); refreshDist._t = setTimeout(() => { if (X.S) refreshDist(X.S.nodes); }, 2000); }
       // swap 测速/停止 button in place when the testing flag flips (avoid a full re-render mid-test)
       const btn = document.querySelector('.page-head .actions .btn.danger, .page-head .actions .btn.primary');
       if (btn && ((S2.testing === true) !== (btn.textContent === '停止测速'))) {
@@ -757,14 +763,14 @@ PAGES.geo = () => {
       h('button', { class: 'btn', onclick: (e) => act(() => (refreshSelf(), refreshNode(), refreshTargets()), undefined, e.currentTarget) }, '刷新位置')),
     h('div', { class: 'card ipcard', style: { marginBottom: '14px' } },
       h('div', { class: 'ipmain' },
-        h('div', { class: 'k', style: { fontSize: '12px', color: 'var(--ink-3)' } }, running ? 'IP 检测 · 经当前节点出口' : 'IP 检测 · 本机公网（直连）'),
+        h('div', { class: 'k', style: { fontSize: '12px', color: 'var(--ink-3)' } }, running ? 'IP 检测 · 经当前节点出口' : 'IP 检测 · 本机公网（连接节点后可检测节点 IP 纯净度）'),
         h('div', { class: 'iprow' }, exitIp, exitTag,
           h('button', { class: 'btn small ghost', title: '复制 IP', onclick: () => navigator.clipboard.writeText(exitIp.textContent).then(() => toast('已复制')) }, '复制')),
         exitLoc, exitMeta),
       h('div', { class: 'ipside' },
         h('div', { class: 'k', style: { fontSize: '12px', color: 'var(--ink-3)' } }, '直连公网'),
         directIp, directLoc)),
-    h('div', { class: 'grid cols-3', style: { marginBottom: '14px' } }, nodeInfo.el),
+    running ? h('div', { class: 'grid cols-3', style: { marginBottom: '14px' } }, nodeInfo.el) : h('div', { class: 'note', style: { marginBottom: '14px', textAlign: 'center', padding: '16px' } }, '启动内核并连接节点后，这里会显示节点 IP 位置与纯净度检测'),
     h('div', { class: 'card' }, h('h2', {}, '世界地图', h('span', { class: 'hint' }, '平面图与 3D 地球可切换')), mapHolder, globeBox, legend));
 
   return {
@@ -897,6 +903,73 @@ PAGES.toolbox = () => {
   return { el };
 };
 
+// ================================================================ color wheel
+function hsvToRgb(h, s, v) {
+  const f = (n) => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+  return [Math.round(f(5) * 255), Math.round(f(3) * 255), Math.round(f(1) * 255)];
+}
+function rgbToHex(r, g, b) { return '#' + [r, g, b].map((x) => x.toString(16).padStart(2, '0')).join(''); }
+function hexToRgb(hex) { const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex); return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [22, 24, 29]; }
+
+function colorWheelPicker(currentColor, onPick, onReset) {
+  const W = 200; const R = 90; const CX = W / 2; const CY = W / 2;
+  const canvas = h('canvas', { width: W, height: W, style: { width: W + 'px', height: W + 'px', cursor: 'crosshair', borderRadius: '50%' } });
+  const g = canvas.getContext('2d');
+  let brightness = 1;
+  let cur = currentColor || '';
+
+  const paint = () => {
+    const img = g.createImageData(W, W);
+    for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
+      const dx = x - CX; const dy = y - CY; const dist = Math.sqrt(dx * dx + dy * dy);
+      const i = (y * W + x) * 4;
+      if (dist <= R) {
+        const hue = ((Math.atan2(dy, dx) * 180 / Math.PI) + 360) % 360;
+        const sat = Math.min(1, dist / R);
+        const [r, gg, b] = hsvToRgb(hue, sat, brightness);
+        img.data[i] = r; img.data[i + 1] = gg; img.data[i + 2] = b; img.data[i + 3] = 255;
+      } else { img.data[i + 3] = 0; }
+    }
+    g.putImageData(img, 0, 0);
+    // brightness grid overlay
+    g.fillStyle = `rgba(0,0,0,${1 - brightness})`;
+    g.beginPath(); g.arc(CX, CY, R, 0, Math.PI * 2); g.fill();
+  };
+
+  const pick = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left; const y = e.clientY - rect.top;
+    const dx = x - CX; const dy = y - CY; const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > R) return;
+    const hue = ((Math.atan2(dy, dx) * 180 / Math.PI) + 360) % 360;
+    const sat = Math.min(1, dist / R);
+    const [r, gg, b] = hsvToRgb(hue, sat, brightness);
+    cur = rgbToHex(r, gg, b);
+    preview.style.background = cur; hexInput.value = cur;
+    onPick(cur);
+  };
+  canvas.addEventListener('pointerdown', (e) => { pick(e); canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener('pointermove', (e) => { if (e.buttons) pick(e); });
+
+  const preview = h('div', { style: { width: '36px', height: '36px', borderRadius: '8px', border: '2px solid var(--line)', background: cur || 'transparent', flex: 'none' } });
+  const hexInput = h('input', { type: 'text', value: cur, placeholder: '#RRGGBB', style: { width: '90px', fontFamily: 'var(--mono)', fontSize: '12px' },
+    onchange: () => { if (/^#[0-9a-fA-F]{6}$/.test(hexInput.value)) { cur = hexInput.value; preview.style.background = cur; onPick(cur); } } });
+  const briSlider = h('input', { type: 'range', min: 20, max: 100, value: Math.round(brightness * 100), style: { flex: '1' },
+    oninput: (e) => { brightness = Number(e.target.value) / 100; paint(); } });
+  const presets = ['#16181d', '#e8eaf1', '#ffffff', '#5b9bd5', '#e8a54b', '#4bc0c0', '#c0504d', '#9552a3', '#2f6bff', '#f43f5e'];
+  const swatches = h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' } },
+    presets.map((c) => h('button', { style: { width: '22px', height: '22px', borderRadius: '5px', background: c, border: '1px solid var(--line)', cursor: 'pointer', flex: 'none' },
+      title: c, onclick: () => { cur = c; preview.style.background = c; hexInput.value = c; onPick(c); } })));
+  const resetBtn = h('button', { class: 'btn small ghost', onclick: () => { cur = ''; preview.style.background = 'transparent'; hexInput.value = ''; onReset(); } }, '恢复默认');
+  paint();
+  return h('div', { style: { display: 'flex', gap: '16px', alignItems: 'flex-start' } },
+    canvas,
+    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', flex: '1' } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, preview, hexInput, resetBtn),
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, h('span', { class: 'mut2', style: { fontSize: '11px' } }, '亮度'), briSlider),
+      swatches));
+}
+
 // ================================================================ settings
 PAGES.settings = () => {
   const S = X.S; const s = S.settings; const F = {};
@@ -970,6 +1043,13 @@ PAGES.settings = () => {
             slider('wallpaperOpacity', '壁纸不透明度（图片显示强度）', 10, 100, 5, (v) => pct(v / 100)),
             slider('wallpaperVeil', '亮度遮罩（越大越接近纯色主题）', 0, 95, 5, (v) => pct(v / 100)),
             slider('wallpaperBlur', '壁纸模糊', 0, 40, 2, px));
+        })(),
+        (() => { // font color picker (color wheel)
+          let deb;
+          const picker = colorWheelPicker(s.fontColor || '',
+            (c) => { document.documentElement.style.setProperty('--ink', c); document.documentElement.style.setProperty('--ink-2', c); clearTimeout(deb); deb = setTimeout(() => api('setSettings', { fontColor: c }).catch(() => {}), 400); },
+            () => { document.documentElement.style.removeProperty('--ink'); document.documentElement.style.removeProperty('--ink-2'); clearTimeout(deb); deb = setTimeout(() => api('setSettings', { fontColor: '' }).catch(() => {}), 400); });
+          return h('div', { class: 'field span2' }, h('label', {}, '字体颜色（色轮选择，影响全应用文字）'), picker);
         })(),
         (() => { // frosted glass: independent opacity, text stays solid
           const live = (v) => { document.documentElement.style.setProperty('--glass-pct', Math.round(v * 100) + '%'); };
