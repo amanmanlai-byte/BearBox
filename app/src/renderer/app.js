@@ -44,10 +44,16 @@ function stateSig(S) {
 
 let navRebuildTimer = null;
 function renderNav() {
-  // during a test run the state pushes are frequent; throttle nav rebuilds to avoid sidebar flicker
-  if (X.S && X.S.testing === true) {
-    if (navRebuildTimer) return;
-    navRebuildTimer = setTimeout(() => { navRebuildTimer = null; renderNav(); }, 1500);
+  // during a test run the state pushes are frequent; skip the full sidebar REBUILD
+  // (it flickers) but still update the active-item highlight in place so switching
+  // pages mid-test shows the correct selection immediately
+  if (X.S && X.S.testing === true && navRebuildTimer) {
+    const nav = document.getElementById('nav');
+    nav.querySelectorAll('button').forEach((b, i) => {
+      const active = NAV[i] && NAV[i][0] === page;
+      b.classList.toggle('on', active);
+      if (active) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
+    });
     return;
   }
   clearTimeout(navRebuildTimer); navRebuildTimer = null;

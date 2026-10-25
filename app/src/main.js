@@ -171,6 +171,13 @@ const handlers = {
   },
   // ---------- geo / map ----------
   geoSelf: (a) => svc.geo.self({ direct: !!(a && a.direct) }),
+  geoPurity: async (a) => {
+    const ip = a && a.ip;
+    if (!ip || !/^[0-9a-fA-F:.]+$/.test(ip)) throw new Error('无效的 IP');
+    const proxy = svc.core.state === 'running' ? { host: '127.0.0.1', port: Number(svc.d.settings.mixedPort) } : null;
+    try { return await lookupPurity(ip, { proxy }); }
+    catch (e) { const p = assessPurity({ isp: '' }); p.fallback = true; p.fallbackReason = e.message; return p; }
+  },
   geoIps: async (a) => {
     const ips = [...new Set((a.ips || []).filter(Boolean))].slice(0, 8);
     const out = {};

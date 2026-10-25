@@ -597,34 +597,55 @@ PAGES.geo = () => {
     nodePurity.classList.add(pu.score >= 85 ? 'good' : pu.score >= 60 ? 'mid' : 'bad');
     nodePurity.title = `节点 IP 纯净度 ${pu.score}（${pu.level}）：${pu.basis}。${pu.note}`;
   };
-  const fillNode = (geo, extra) => {
-    const el = nodeInfo.main; el.replaceChildren();
-    if (!geo) { el.append(h('span', { class: 'mut2' }, '无数据')); showPurity(null); return; }
-    if (geo.error) { el.append(h('span', { class: 'err' }, '查询失败：' + geo.error)); showPurity(null); return; }
-    el.append(h('b', { style: { fontSize: '14px' } }, geo.ip || '-'),
-      h('span', { class: 'mut' }, [geo.country, geo.region, geo.city].filter(Boolean).join(' · ') || '-'),
-      h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, [geo.isp, geo.asn ? 'AS' + geo.asn : null].filter(Boolean).join(' · ') || ''),
-      h('div', { class: 'toolbar', style: { marginTop: '4px' } }, nodePurity, extra || null));
-  };
-  const purityBtn = h('button', { class: 'btn small', title: '对当前节点 IP 运行纯净度检测（ip.sb 归属推断）',
-    onclick: (e) => act(async () => {
-      const sel = X.S.nodes.find((n) => n.id === X.S.selectedId);
-      if (!sel) throw new Error('未选择节点');
-      const all = await api('geoNodes', { servers: [sel.server] });
-      const g = all[sel.server];
-      if (!g || g.error) throw new Error((g && g.error) || '节点定位失败');
-      if (!g.purity) throw new Error('未能取得纯净度评估');
-      showPurity(g.purity);
-      return g.purity;
-    }, (pu) => { purityDetail(g_, pu); return `节点纯净度：${pu.score}（${pu.level}）`; }, e.currentTarget) }, '纯净度检测');
-  let g_ = null; // last geo result for the detail modal
-
+  // Exit-country view: while connected, the EXIT location (state.exit) is what matters;
+  // the entry server (state.node) is only context. Display exits-first.
   const nodeInfo = (() => {
-    const main = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', minHeight: '58px' } }, h('span', { class: 'mut2' }, '查询中…'));
-    return { el: h('div', { class: 'card tile' }, h('div', { class: 'k' }, '节点服务器位置（入口机房）',
-      h('span', { class: 'hint' }, '纯净度针对节点 IP；与节点名中的国家可能不同')), main,
-      h('div', { style: { marginTop: '8px' } }, purityBtn)), main };
+    const main = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', minHeight: '58px' } }, h('span', { class: 'mut2' }, '连接节点后显示出口国家'));
+    return { el: h('div', { class: 'card tile' }, h('div', { class: 'k' }, '节点出口国家', h('span', { class: 'hint' }, '网站看到的国家')), main), main };
   })();
+  const fillExitNode = () => {
+    const el = nodeInfo.main; el.replaceChildren();
+    const sel = X.S.nodes.find((n) => n.id === X.S.selectedId);
+    if (!isRunning()) {
+      el.append(h('span', { class: 'mut2' }, '启动内核并连接节点后，这里显示该节点的出口国家与纯净度。'));
+      showPurity(null); return;
+    }
+    if (ok(state.exit)) {
+      el.append(h('b', { style: { fontSize: '15px' } }, state.exit.country || '-'),
+        h('span', { class: 'mut' }, [state.exit.city, state.exit.region].filter(Boolean).join(' · ') || ''),
+        h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, `出口 IP ${state.exit.ip}` + (sel ? ` · 节点：${sel.tag}` : '')));
+      if (state.node && !state.node.error) {
+        el.append(h('span', { class: 'mut2', style: { fontSize: '11px' } }, `入口机房：${state.node.country || ''}${state.node.city ? ' · ' + state.node.city : ''}（${state.node.isp || ''}）`));
+      }
+    } else {
+      el.append(h('span', { class: 'mut2' }, '正在查询出口位置…'));
+    }
+    // purity chip reflects the EXIT IP when available, otherwise the node server IP
+    if (ok(state.exit) && state.exit.purity) showPurity(state.exit.purity);
+    else if (state.node && state.node.purity) showPurity(state.node.purity);
+    else showPurity(null);
+  };
+  const purityBtn = h('button', { class: 'btn small', title: '对当前出口 IP 运行纯净度检测（ip.net.coffee 风控数据）',
+    onclick: (e) => act(async () => {
+      if (!isRunning()) throw new Error('请先启动内核并连接节点');
+      const sel = X.S.nodes.find((n) => n.id === X.S.selectedId);
+      let pu; let target = '出口';
+      if (ok(state.exit)) {
+        pu = await api('geoPurity', { ip: state.exit.ip }).catch(() => null);
+      }
+      if (!pu) {
+        // fall back to the entry server IP
+        if (!sel) throw new Error('未选择节点');
+        const all = await api('geoNodes', { servers: [sel.server] });
+        const g = all[sel.server];
+        if (!g || g.error) throw new Error((g && g.error) || '节点定位失败');
+        pu = g.purity; target = '节点服务器';
+      }
+      if (!pu) throw new Error('未能取得纯净度评估');
+      showPurity(pu);
+      purityDetail(state.exit, pu);
+      return pu;
+    }, (pu) => `纯净度：${pu.score}（${pu.level}）`, e.currentTarget) }, '纯净度检测');
   void checkedAt;
 
   // ---- dual view: flat 2D map + 3D globe
@@ -685,23 +706,15 @@ PAGES.geo = () => {
   };
   const refreshNode = async () => {
     const sel = X.S.nodes.find((n) => n.id === X.S.selectedId);
-    if (!sel) { fillNode(null); state.node = null; draw(); return; }
-    fillNode({ ip: sel.server, country: '解析中…' });
+    if (!sel) { fillExitNode(); state.node = null; draw(); return; }
+    fillExitNode();
     try {
       const all = await api('geoNodes', { servers: [sel.server] });
       if (!alive) return;
       const g = all[sel.server];
       if (g && !g.error) {
         state.node = g; g_ = g;
-        // nodes are often labeled by EXIT country while the server sits in a relay datacenter elsewhere
-        let note = h('span', { class: 'mut2', style: { fontSize: '11px' } }, sel.tag);
-        const labelCountry = /美国|日本|香港|台湾|新加坡|韩国|英国|德国|巴西|荷兰|马来|土耳其|阿根廷|俄罗斯|加拿大|法国|意大利|西班牙|印度|泰国|越南|菲律宾|印尼|澳洲|阿根廷/.exec(sel.tag);
-        if (labelCountry && g.country && !g.country.includes(labelCountry[0].slice(0, 2))) {
-          note = h('span', { class: 'note', style: { fontSize: '11px' } },
-            sel.tag, h('br'),
-            `节点名中的「${labelCountry[0]}」指出口国家；此服务器是入口中转机房（Akile 等服务商），实际出口位置见上方「出口位置」卡片。`);
-        }
-        fillNode(g, note);
+        fillExitNode();
       }
       else { state.node = null; fillNode({ error: (g && g.error) || '查询失败' }); }
     } catch (e) { if (alive) fillNode({ error: e.message }); }
