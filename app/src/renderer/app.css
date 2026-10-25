@@ -87,6 +87,37 @@ body.glass .modal { background: color-mix(in srgb, var(--card) 92%, transparent)
 
 input[type=range] { accent-color: var(--accent); width: 100%; }
 
+/* ---------------- 3D globe view (ported WebGL globe) ---------------- */
+.globe-view { position: relative; height: 440px; border-radius: 8px; overflow: hidden; background: var(--card-2); }
+.globe-view canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.globe-view #credit { position: absolute; left: 6px; bottom: 4px; color: #69778b; font: 8px sans-serif; pointer-events: none; text-shadow: 0 1px 2px #000; }
+.globe-view #error { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; color: var(--ink-2); font-size: 12px; text-align: center; padding: 12px; }
+
+/* ---------------- IP detection card ---------------- */
+.ipcard { display: flex; gap: 20px; align-items: stretch; }
+.ipcard .ipmain { flex: 1.4; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ipcard .iprow { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
+.ipcard .ip { font-family: var(--mono); font-size: 22px; font-weight: 700; letter-spacing: .3px; }
+.ipcard .loc { font-size: 13px; color: var(--ink-2); }
+.ipcard .meta { font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
+.ipcard .ipside { flex: 1; border-left: 1px solid var(--line); padding-left: 18px; display: flex; flex-direction: column; gap: 3px; justify-content: center; min-width: 0; }
+.ipcard .ipside .v { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+
+/* ---------------- motion (medium, restrained) ---------------- */
+.page-nav { animation: pageIn .16s ease-out; }
+@keyframes pageIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+.card { transition: box-shadow .13s ease, border-color .13s ease; }
+.card:hover { box-shadow: 0 3px 14px rgba(20, 24, 31, 0.08); }
+button.btn { transition: background .12s, border-color .12s, box-shadow .12s, transform .08s; }
+button.btn:active:not(:disabled) { transform: scale(.98); }
+.modal { animation: modalIn .16s cubic-bezier(.2, .9, .3, 1); }
+@keyframes modalIn { from { opacity: 0; transform: scale(.97) translateY(4px); } to { opacity: 1; transform: none; } }
+body, .card, .side, .logs, .tbl th { transition: background-color .15s ease, color .15s ease; }
+.nav button, .seg button, .chip { transition: background .12s ease, color .12s ease; }
+tr.pick { transition: background .1s ease; }
+.viewfade { animation: viewIn .18s ease-out; }
+@keyframes viewIn { from { opacity: 0; } to { opacity: 1; } }
+
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ink-3) 40%, transparent); border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
 ::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--ink-3) 70%, transparent); border: 2px solid transparent; background-clip: content-box; }

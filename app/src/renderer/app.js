@@ -82,7 +82,11 @@ function render() {
   // the browser paints once, so there is no blank/flash frame in between
   if (view.mount) view.mount();
 }
-function go(p) { page = p; render(); document.getElementById('main').scrollTop = 0; }
+function go(p) {
+  page = p; render(); document.getElementById('main').scrollTop = 0;
+  // navigation-only entrance animation (state-driven re-renders stay still: no flicker)
+  if (view && view.el) { view.el.classList.add('page-nav'); setTimeout(() => view.el.classList.remove('page-nav'), 220); }
+}
 window.__go = go; window.__render = render;
 window.__applyState = applyState; // test hook: inject a state snapshot (used by verification probes)
 
@@ -92,18 +96,20 @@ function applyTheme() {
 }
 function applySkin() {
   const s = X.S && X.S.settings ? X.S.settings : {};
-  // wallpaper
+  // wallpaper. NOTE: 0 is a legitimate value (e.g. veil fully off) - only fall back
+  // when the setting is missing/not a number, never on falsy-ness (bug: veil 0% jumped back to 55%)
+  const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
   const on = !!s.wallpaper;
   document.body.classList.toggle('wallpaper', on);
   const wp = document.getElementById('wp');
   if (on) wp.style.backgroundImage = `url("file:///${String(s.wallpaper).replace(/\\/g, '/').split('/').map(encodeURI).join('/')}")`;
   else wp.style.backgroundImage = '';
-  document.documentElement.style.setProperty('--wp-o', Number(s.wallpaperOpacity) || 0.35);
-  document.documentElement.style.setProperty('--wp-veil', Number(s.wallpaperVeil) || 0.55);
-  document.documentElement.style.setProperty('--wp-blur', (Number(s.wallpaperBlur) || 0) + 'px');
+  document.documentElement.style.setProperty('--wp-o', num(s.wallpaperOpacity, 0.35));
+  document.documentElement.style.setProperty('--wp-veil', num(s.wallpaperVeil, 0.55));
+  document.documentElement.style.setProperty('--wp-blur', num(s.wallpaperBlur, 0) + 'px');
   // frosted glass (independent opacity; text color stays solid)
   document.body.classList.toggle('glass', !!s.glassEnabled);
-  document.documentElement.style.setProperty('--glass-pct', Math.round((Number(s.glassOpacity) || 0.6) * 100) + '%');
+  document.documentElement.style.setProperty('--glass-pct', Math.round(num(s.glassOpacity, 0.6) * 100) + '%');
 }
 
 function applyState(S) {

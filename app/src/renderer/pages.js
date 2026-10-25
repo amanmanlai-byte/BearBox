@@ -512,71 +512,113 @@ let WORLD_GEO = null; // world GeoJSON loaded once per app run
 PAGES.geo = () => {
   const S = X.S;
   const running = isRunning();
-  const selNode = S.nodes.find((n) => n.id === S.selectedId);
+  X.geoView = X.geoView || 'flat'; // 'flat' | 'globe' (persisted across page switches)
 
-  // ---- info cards
-  const mkInfoCard = (title) => {
-    const main = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', minHeight: '58px' } }, h('span', { class: 'mut2' }, '查询中…'));
-    return { el: h('div', { class: 'card tile' }, h('div', { class: 'k' }, title), main), main };
+  // ---- IP detection card (redesigned port of the Android IP 检测 feature; data via ip.sb)
+  const exitIp = h('b', { class: 'ip' }, '检测中…');
+  const exitTag = h('span', { class: 'tag accent', style: { visibility: 'hidden' } }, '');
+  const exitLoc = h('div', { class: 'loc' }, '');
+  const exitMeta = h('div', { class: 'meta' }, '来源 ip.sb');
+  const directIp = h('div', { class: 'v' }, '检测中…');
+  const directLoc = h('div', { class: 'loc', style: { fontSize: '12px' } }, '');
+  const checkedAt = new Date();
+  const fillIpCard = (geo, err) => {
+    if (err) { exitIp.textContent = '检测失败'; exitTag.style.visibility = 'hidden'; exitLoc.textContent = err; exitMeta.textContent = '来源 ip.sb'; return; }
+    exitIp.textContent = geo.ip || '-';
+    exitTag.textContent = geo.country_code || ''; exitTag.style.visibility = geo.country_code ? 'visible' : 'hidden';
+    exitLoc.textContent = [geo.city, geo.region, geo.country].filter(Boolean).join(' · ');
+    exitMeta.textContent = `检测于 ${new Date().toLocaleTimeString()} · 来源 ip.sb · ${geo.isp || ''}${geo.asn ? ' (AS' + geo.asn + ')' : ''}`;
   };
-  const exitInfo = mkInfoCard(running ? '出口位置（经当前节点）' : '本机公网位置（直连）');
-  const directInfo = mkInfoCard('直连公网位置');
-  const nodeInfo = mkInfoCard('当前节点服务器');
-  const fillInfo = (el, geo, extra) => {
-    el.replaceChildren();
+  const fillDirect = (geo, err) => {
+    directIp.textContent = err ? '失败' : (geo.ip || '-');
+    directLoc.textContent = err ? err : [geo.country, geo.city].filter(Boolean).join(' · ');
+  };
+  const nodeInfo = (() => {
+    const main = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', minHeight: '58px' } }, h('span', { class: 'mut2' }, '查询中…'));
+    return { el: h('div', { class: 'card tile' }, h('div', { class: 'k' }, '当前节点服务器'), main), main };
+  })();
+  const fillNode = (geo, extra) => {
+    const el = nodeInfo.main; el.replaceChildren();
     if (!geo) { el.append(h('span', { class: 'mut2' }, '无数据')); return; }
     if (geo.error) { el.append(h('span', { class: 'err' }, '查询失败：' + geo.error)); return; }
-    el.append(
-      h('b', { style: { fontSize: '14px' } }, geo.ip || '-'),
+    el.append(h('b', { style: { fontSize: '14px' } }, geo.ip || '-'),
       h('span', { class: 'mut' }, [geo.country, geo.region, geo.city].filter(Boolean).join(' · ') || '-'),
       h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, [geo.isp, geo.asn ? 'AS' + geo.asn : null].filter(Boolean).join(' · ') || ''),
       extra || null);
   };
+  void checkedAt;
 
-  // ---- map
-  const canvas = h('canvas', { style: { width: '100%', height: '440px', display: 'block', borderRadius: '8px', touchAction: 'none' } });
-  let map = null;
-  const state = { exit: null, direct: null, node: null, targets: [] }; // markers {lon,lat,...}
-  const draw = () => {
-    if (!map) return;
+  // ---- dual view: flat 2D map + 3D globe
+  const flatCanvas = h('canvas', { style: { width: '100%', height: '440px', display: 'block', borderRadius: '8px', touchAction: 'none' } });
+  const globeBox = h('div', { class: 'globe-view', style: { display: 'none' } });
+  const mapHolder = h('div', {}, flatCanvas);
+  let map = null; let globe = null;
+  const state = { exit: null, direct: null, node: null, targets: [], targetGeos: [] };
+  const ok = (g) => g && !g.error && Number.isFinite(g.longitude) && Number.isFinite(g.latitude);
+  const code = (g) => (ok(g) && /^[A-Za-z]{2}$/.test(g.country_code || '') ? g.country_code.toUpperCase() : null);
+
+  const flatDraw = () => {
+    if (!map || X.geoView !== 'flat') return;
     const markers = []; const arcs = [];
     const AC = CVAR('--accent'); const DC = CVAR('--down'); const UC = CVAR('--up');
-    if (state.direct && !state.direct.error) markers.push({ lon: state.direct.longitude, lat: state.direct.latitude, color: UC, r: 3.5, label: '直连' });
-    if (state.exit && !state.exit.error) markers.push({ lon: state.exit.longitude, lat: state.exit.latitude, color: AC, r: 5, label: running ? '出口' : '本机', pulse: true });
-    if (state.node && !state.node.error) markers.push({ lon: state.node.longitude, lat: state.node.latitude, color: DC, r: 4.5, label: '节点' });
-    if (state.exit && !state.exit.error && state.node && !state.node.error) arcs.push({ from: { lon: state.exit.longitude, lat: state.exit.latitude }, to: { lon: state.node.longitude, lat: state.node.latitude }, color: AC, width: 2, alpha: 0.85 });
+    if (ok(state.direct)) markers.push({ lon: state.direct.longitude, lat: state.direct.latitude, color: UC, r: 3.5, label: '直连' });
+    if (ok(state.exit)) markers.push({ lon: state.exit.longitude, lat: state.exit.latitude, color: AC, r: 5, label: running ? '出口' : '本机', pulse: true });
+    if (ok(state.node)) markers.push({ lon: state.node.longitude, lat: state.node.latitude, color: DC, r: 4.5, label: '节点' });
+    if (ok(state.exit) && ok(state.node)) arcs.push({ from: { lon: state.exit.longitude, lat: state.exit.latitude }, to: { lon: state.node.longitude, lat: state.node.latitude }, color: AC, width: 2, alpha: 0.85 });
     const shown = new Set();
     for (const t of state.targets) {
       const k = t.lon + ',' + t.lat; if (shown.has(k)) continue;
       shown.add(k);
       markers.push({ lon: t.lon, lat: t.lat, color: CVAR('--ink-3'), r: 2.5 });
-      if (state.node && !state.node.error) arcs.push({ from: { lon: state.node.longitude, lat: state.node.latitude }, to: t, color: DC, width: 1, alpha: 0.35 });
+      if (ok(state.node)) arcs.push({ from: { lon: state.node.longitude, lat: state.node.latitude }, to: t, color: DC, width: 1, alpha: 0.35 });
     }
     map.setData({ markers, arcs, date: new Date() });
   };
 
+  const globeFeed = () => {
+    if (!globe || X.geoView !== 'globe') return;
+    const nodes = []; const links = []; const countries = {}; const bump = (c, n) => { if (c) countries[c] = (countries[c] || 0) + n; };
+    const origin = ok(state.direct) ? state.direct : state.exit; // 本机位置
+    if (code(origin)) nodes.push({ id: 'self', role: 'origin', code: code(origin), lon: origin.longitude, lat: origin.latitude });
+    if (ok(state.node) && code(state.node)) { nodes.push({ id: 'exit', role: 'exit', code: code(state.node), lon: state.node.longitude, lat: state.node.latitude }); bump(code(state.node), 1); }
+    let di = 0;
+    for (const g of state.targetGeos) {
+      const c = code(g); if (!c) continue;
+      nodes.push({ id: 'd' + di, role: 'destination', code: c, lon: g.longitude, lat: g.latitude });
+      if (nodes.some((n) => n.id === 'exit')) links.push({ from: 'exit', to: 'd' + di, kind: 'request', count: Math.max(1, Math.round((g.down || 0) / 1048576) + 1) });
+      bump(c, 1); di++;
+    }
+    if (nodes.some((n) => n.id === 'self') && nodes.some((n) => n.id === 'exit')) links.push({ from: 'self', to: 'exit', kind: 'uplink', count: 1 });
+    globe.setState({
+      dark: document.documentElement.dataset.theme === 'dark',
+      countries: Object.entries(countries).map(([cc, count]) => ({ code: cc, count })),
+      nodes, links, autoRotate: true, paused: false,
+    });
+  };
+
+  const draw = () => { flatDraw(); globeFeed(); };
+
   let alive = true; let targetTimer = null; let drawTimer = null; let selfTimer = null;
   const refreshSelf = async () => {
-    try { const g = await api('geoSelf', {}); if (!alive) return; state.exit = g; fillInfo(exitInfo.main, g); } catch (e) { if (alive) { state.exit = { error: e.message }; fillInfo(exitInfo.main, { error: e.message }); } }
-    try { const g = await api('geoSelf', { direct: true }); if (!alive) return; state.direct = g; fillInfo(directInfo.main, g, running ? null : h('span', { class: 'mut2', style: { fontSize: '11px' } }, '与出口相同：内核未运行')); } catch (e) { if (alive) fillInfo(directInfo.main, { error: e.message }); }
+    try { const g = await api('geoSelf', {}); if (!alive) return; state.exit = g; fillIpCard(g); } catch (e) { if (alive) { state.exit = { error: e.message }; fillIpCard(null, e.message); } }
+    try { const g = await api('geoSelf', { direct: true }); if (!alive) return; state.direct = g; fillDirect(g); } catch (e) { if (alive) fillDirect(null, e.message); }
     draw();
   };
   const refreshNode = async () => {
     const sel = X.S.nodes.find((n) => n.id === X.S.selectedId);
-    if (!sel) { fillInfo(nodeInfo.main, null); state.node = null; draw(); return; }
-    fillInfo(nodeInfo.main, { ip: sel.server, country: '解析中…' });
+    if (!sel) { fillNode(null); state.node = null; draw(); return; }
+    fillNode({ ip: sel.server, country: '解析中…' });
     try {
-      // only the selected server: fast (single DNS + cached lookup), no waiting on the rest
       const all = await api('geoNodes', { servers: [sel.server] });
       if (!alive) return;
       const g = all[sel.server];
-      if (g && !g.error) { state.node = g; fillInfo(nodeInfo.main, g, h('span', { class: 'mut2', style: { fontSize: '11px' } }, sel.tag)); }
-      else { state.node = null; fillInfo(nodeInfo.main, { error: (g && g.error) || '查询失败' }); }
-    } catch (e) { if (alive) fillInfo(nodeInfo.main, { error: e.message }); }
+      if (g && !g.error) { state.node = g; fillNode(g, h('span', { class: 'mut2', style: { fontSize: '11px' } }, sel.tag)); }
+      else { state.node = null; fillNode({ error: (g && g.error) || '查询失败' }); }
+    } catch (e) { if (alive) fillNode({ error: e.message }); }
     draw();
   };
   const refreshTargets = async () => {
-    if (!isRunning()) { state.targets = []; draw(); return; }
+    if (!isRunning()) { state.targets = []; state.targetGeos = []; draw(); return; }
     try {
       const conns = await api('connections', {});
       if (!alive) return;
@@ -584,38 +626,79 @@ PAGES.geo = () => {
       const ips = top.map((c) => c.host).filter(Boolean);
       const geo = ips.length ? await api('geoIps', { ips }) : {};
       if (!alive) return;
-      state.targets = ips.map((ip) => geo[ip] && !geo[ip].error ? { lon: geo[ip].longitude, lat: geo[ip].latitude } : null).filter(Boolean).slice(0, 6);
+      state.targetGeos = ips.map((ip) => (geo[ip] && !geo[ip].error ? { ...geo[ip], down: 0 } : null)).filter(Boolean).slice(0, 6);
+      state.targets = state.targetGeos.map((g) => ({ lon: g.longitude, lat: g.latitude }));
       draw();
     } catch { /* core may be stopping */ }
   };
 
+  // ---- view switch
+  const setView = (v) => {
+    X.geoView = v;
+    try { localStorage.setItem('jj.geoView', v); } catch { /* private mode */ }
+    viewSeg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+    if (v === 'flat') {
+      if (globe) { try { globe.setState({ paused: true }); } catch { } }
+      globeBox.style.display = 'none';
+      mapHolder.style.display = '';
+      mapHolder.classList.remove('viewfade'); void mapHolder.offsetWidth; mapHolder.classList.add('viewfade');
+      flatDraw();
+    } else {
+      mapHolder.style.display = 'none';
+      globeBox.style.display = '';
+      globeBox.classList.remove('viewfade'); void globeBox.offsetWidth; globeBox.classList.add('viewfade');
+      if (!globe) globe = initGlobe(globeBox); // created lazily on first use
+      globeFeed();
+    }
+  };
+  const viewSeg = h('div', { class: 'seg', role: 'group', 'aria-label': '切换地图模型' },
+    h('button', { 'data-v': 'flat', onclick: () => setView('flat') }, '平面地图'),
+    h('button', { 'data-v': 'globe', onclick: () => setView('globe') }, '3D 地球'));
+
   (async () => {
     try { WORLD_GEO = WORLD_GEO || await api('worldGeo', {}); } catch (e) { if (alive) toast('世界地图数据加载失败：' + e.message, true); return; }
     if (!alive) return;
-    map = new WorldMap(canvas, WORLD_GEO);
-    draw();
+    map = new WorldMap(flatCanvas, WORLD_GEO);
+    let saved = 'flat';
+    try { saved = localStorage.getItem('jj.geoView') === 'globe' ? 'globe' : 'flat'; } catch { /* ignore */ }
+    setView(saved);
     refreshSelf(); refreshNode(); refreshTargets();
     targetTimer = setInterval(refreshTargets, 5000);
     selfTimer = setInterval(refreshSelf, 5 * 60 * 1000);
   })();
-  drawTimer = setInterval(draw, 1500); // pulse animation + terminator follows real time
+  drawTimer = setInterval(draw, 1500); // pulse markers on the flat view
 
   const legend = h('div', { class: 'toolbar', style: { marginTop: '10px' } },
     h('span', { class: 'chip' }, h('i', { style: { background: 'var(--accent)', width: '9px', height: '9px', borderRadius: '50%' } }), '本机/出口'),
     h('span', { class: 'chip' }, h('i', { style: { background: 'var(--down)', width: '9px', height: '9px', borderRadius: '50%' } }), '节点'),
     h('span', { class: 'chip' }, h('i', { style: { background: 'var(--ink-3)', width: '9px', height: '9px', borderRadius: '50%' } }), '连接目标'),
-    h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, '深色区域为当前真实时间的黑夜'),
+    h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, '位置来自 ip.sb 查询（本地缓存 30 天），目标为机房位置仅供参考'),
     h('span', { class: 'sp' }),
     h('button', { class: 'btn small', onclick: () => map && map.zoomBy(1.4) }, '放大'),
     h('button', { class: 'btn small', onclick: () => map && map.zoomBy(1 / 1.4) }, '缩小'),
     h('button', { class: 'btn small ghost', onclick: () => map && map.resetView() }, '复位'));
-  const el = h('div', { class: 'page' },
-    pageHead('地图', '自身、节点与目标服务器的地理位置 · 昼夜随真实时间变化 · 滚轮缩放拖拽平移',
-      h('button', { class: 'btn', onclick: (e) => act(() => (refreshSelf(), refreshNode(), refreshTargets()), undefined, e.currentTarget) }, '刷新位置')),
-    h('div', { class: 'grid cols-3', style: { marginBottom: '14px' } }, exitInfo.el, directInfo.el, nodeInfo.el),
-    h('div', { class: 'card' }, h('h2', {}, '世界地图', h('span', { class: 'hint' }, '地理位置来自 ip.sb 查询（本地缓存 30 天）；目标位置为服务器机房，仅供参考')), canvas, legend));
 
-  return { el, resize: () => draw(), destroy: () => { alive = false; clearInterval(targetTimer); clearInterval(drawTimer); clearInterval(selfTimer); } };
+  const el = h('div', { class: 'page' },
+    pageHead('地图', '自身、节点与目标服务器的地理位置 · 滚轮缩放拖拽平移',
+      viewSeg,
+      h('button', { class: 'btn', onclick: (e) => act(() => (refreshSelf(), refreshNode(), refreshTargets()), undefined, e.currentTarget) }, '刷新位置')),
+    h('div', { class: 'card ipcard', style: { marginBottom: '14px' } },
+      h('div', { class: 'ipmain' },
+        h('div', { class: 'k', style: { fontSize: '12px', color: 'var(--ink-3)' } }, running ? 'IP 检测 · 经当前节点出口' : 'IP 检测 · 本机公网（直连）'),
+        h('div', { class: 'iprow' }, exitIp, exitTag,
+          h('button', { class: 'btn small ghost', title: '复制 IP', onclick: () => navigator.clipboard.writeText(exitIp.textContent).then(() => toast('已复制')) }, '复制')),
+        exitLoc, exitMeta),
+      h('div', { class: 'ipside' },
+        h('div', { class: 'k', style: { fontSize: '12px', color: 'var(--ink-3)' } }, '直连公网'),
+        directIp, directLoc)),
+    h('div', { class: 'grid cols-3', style: { marginBottom: '14px' } }, nodeInfo.el),
+    h('div', { class: 'card' }, h('h2', {}, '世界地图', h('span', { class: 'hint' }, '平面图与 3D 地球可切换')), mapHolder, globeBox, legend));
+
+  return {
+    el,
+    resize: () => draw(),
+    destroy: () => { alive = false; clearInterval(targetTimer); clearInterval(drawTimer); clearInterval(selfTimer); if (globe) { try { globe.destroy(); } catch { } globe = null; } },
+  };
 };
 
 // ================================================================ stats

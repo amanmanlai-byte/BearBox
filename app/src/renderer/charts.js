@@ -315,29 +315,8 @@ class WorldMap {
     }
     g.globalAlpha = 1;
 
-    // night hemisphere drawn as per-longitude quads (wrap-safe, no giant polygon
-    // that could fold over itself when panned)
-    const now = this.date || new Date();
-    const { decl, lon: subLon } = subsolarPoint(now);
-    const dRad = (decl * Math.PI) / 180;
-    const tDen = Math.tan(dRad) || 1e-9;
-    const termLat = (lon) => {
-      const hAngle = ((lon - subLon) * Math.PI) / 180;
-      const t = Math.atan(-Math.cos(hAngle) / tDen) / (Math.PI / 180);
-      return Number.isFinite(t) ? t : (decl > 0 ? 90 : -90);
-    };
-    const nightPole = decl > 0 ? -90 : 90;
-    g.fillStyle = 'rgba(3, 7, 18, 0.42)';
-    g.beginPath();
-    const steps = 120;
-    for (let i = 0; i < steps; i++) {
-      const lon1 = -180 + (360 * i) / steps;
-      const lon2 = -180 + (360 * (i + 1)) / steps;
-      const a = P(lon1, termLat(lon1)); const b = P(lon2, termLat(lon2));
-      const c = P(lon2, nightPole); const d = P(lon1, nightPole);
-      g.moveTo(a.x, a.y); g.lineTo(b.x, b.y); g.lineTo(c.x, c.y); g.lineTo(d.x, d.y); g.closePath();
-    }
-    g.fill();
+    // (day/night terminator removed by request: the flat map stays neutral;
+    //  the realistic day/night rendering lives on the 3D globe view)
 
     // graticule
     g.strokeStyle = CVAR('--line'); g.globalAlpha = 0.5; g.lineWidth = 1;
