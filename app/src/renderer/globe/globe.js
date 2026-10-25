@@ -241,7 +241,7 @@ function initGlobe(container) {
   }
   function draw(){
     const w=Math.max(1,canvas.clientWidth),h=Math.max(1,canvas.clientHeight);
-    const ratio=Math.min(window.devicePixelRatio||1,3,Math.sqrt(768000/(w*h)));
+    const ratio=Math.min(window.devicePixelRatio||1,3,Math.sqrt(2304000/(w*h)));
     size.w=w;size.h=h;size.span=Math.min(w,h);syncSun();updateRotation();
     if(yaw!==lastViewYaw||pitch!==lastViewPitch||roll!==lastViewRoll||zoom!==lastViewZoom||w!==lastViewW||h!==lastViewH){viewRevision++;lastViewYaw=yaw;lastViewPitch=pitch;lastViewRoll=roll;lastViewZoom=zoom;lastViewW=w;lastViewH=h;}const pw=Math.round(w*ratio),ph=Math.round(h*ratio);
     if(canvas.width!==pw||canvas.height!==ph){canvas.width=overlay.width=pw;canvas.height=overlay.height=ph;}
@@ -259,7 +259,7 @@ function initGlobe(container) {
     if(gpuSun!==sunlight){gl.uniform3f(uniforms.sun,sunlight.vector[0],sunlight.vector[1],sunlight.vector[2]);gpuSun=sunlight;}
     gl.drawArrays(gl.TRIANGLE_STRIP,0,4);labels();draws++;
   }
-  const clampPitch=value=>Math.max(-1.3,Math.min(1.3,value));
+  const clampPitch=value=>{value=((value+Math.PI)%(2*Math.PI)+2*Math.PI)%(2*Math.PI)-Math.PI;return value;}; /* full 360-degree free tilt (wrapped, unclamped) */
   const nearestYaw=angle=>yaw+Math.atan2(Math.sin(angle-yaw),Math.cos(angle-yaw));
   function ease(progress){
     if(!(progress>0))return 0;if(progress>=1)return 1;

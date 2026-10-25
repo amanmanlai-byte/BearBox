@@ -113,6 +113,29 @@ async function resolveHost(host, { proxy = null, transports = null, timeoutMs = 
   return null;
 }
 
+/**
+ * IP purity assessment derived purely from the ip.sb response (the reference project's
+ * only IP API): classifies the ISP/ASN as datacenter/hosting vs residential carrier.
+ * This is a transparent heuristic - NOT a third-party risk-database score - and the
+ * UI labels it as such. Pure function.
+ */
+function assessPurity(geo) {
+  if (!geo || geo.error) return null;
+  const text = `${geo.isp || ''} ${geo.organization || ''} ${geo.asn_organization || ''}`.toLowerCase();
+  const dcHits = ['amazon', 'aws', 'google', 'microsoft', 'azure', 'ovh', 'digitalocean', 'linode', 'akamai', 'vultr',
+    'hetzner', 'oracle', 'alibaba', 'tencent', 'huawei cloud', 'byteplus', 'volcano', 'choopa', 'm247', 'leaseweb',
+    'datacamp', 'datacamp london', 'contabo', 'scaleway', 'cloudflare', 'fastly', 'hostinger', 'namecheap', 'godaddy',
+    'server', 'hosting', 'datacenter', 'data center', 'colo', 'cloud', 'vps', 'dedicated'].filter((k) => text.includes(k));
+  const residentialHits = ['telecom', 'mobile communications', 'china telecom', 'china unicom', 'china mobile', 'comcast',
+    'verizon', 'at&t', 'deutsche telekom', 'orange', 'vodafone', 'british telecom', 'kddi', 'ntt communications',
+    'sk broadband', 'kt corp', 'charter', 'cox comm', 'telefonica', 'telekom', 'cable', 'isp', 'internet access'].filter((k) => text.includes(k));
+  let score; let level; let basis;
+  if (dcHits.length && dcHits.length >= residentialHits.length) { score = 40; level = '机房'; basis = `ISP/ASN 命中机房/云商标记（${dcHits[0]}…）`; }
+  else if (residentialHits.length) { score = 95; level = '住宅'; basis = `ISP/ASN 为运营商网络（${residentialHits[0]}…）`; }
+  else { score = 72; level = '一般'; basis = 'ISP/ASN 无法明确归类'; }
+  return { score, level, basis, note: '基于 ip.sb 的 ISP/ASN 归属推断，非商业风控数据库评分' };
+}
+
 class GeoService {
   constructor({ userData, getProxy = () => null, transports = null, now = () => Date.now() }) {
     this.cacheFile = path.join(userData, 'geo-cache.json');
@@ -165,7 +188,7 @@ class GeoService {
   /** Self lookup (no ip = whatever the request egress is). direct=true forces the direct path. */
   async self({ direct = false } = {}) {
     const geo = await this._fetchJson('/geoip', { forceDirect: direct });
-    return { ...geo, viaProxy: !direct && !!this.getProxy() };
+    return { ...geo, viaProxy: !direct && !!this.getProxy(), purity: assessPurity(geo) };
   }
 
   /** Resolve + locate a hostname (node servers). proxy comes from getProxy(). */
@@ -177,4 +200,4 @@ class GeoService {
   }
 }
 
-module.exports = { GeoService, resolveHost, httpsViaProxy, httpsDirect, dechunk };
+module.exports = { GeoService, resolveHost, assessPurity, httpsViaProxy, httpsDirect, dechunk };

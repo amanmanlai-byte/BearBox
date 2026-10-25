@@ -260,6 +260,11 @@ class AppService extends EventEmitter {
     if (!/^https:\/\//i.test(String(s.connectionTestURL))) throw new Error('测速地址必须以 https:// 开头（内核会忽略 http:// 地址）');
     s.mixedPort = port; s.apiPort = api;
     if (!(Number(s.testConcurrency) > 0)) s.testConcurrency = 5; else s.testConcurrency = Math.min(32, Math.floor(Number(s.testConcurrency)));
+    // repair slider-era values that were persisted on percent scales (e.g. opacity 55 -> 0.55)
+    for (const [k, max] of [['wallpaperOpacity', 1], ['wallpaperVeil', 0.95], ['glassOpacity', 1]]) {
+      const v = Number(s[k]);
+      if (Number.isFinite(v) && v > max) s[k] = v > max * 10 ? v / 100 : max;
+    }
     const needRestart = this.core.state === 'running' && JSON.stringify(s) !== JSON.stringify(this.d.settings) && Object.keys(patch).some((k) => !NO_RESTART_KEYS.includes(k));
     this.d.settings = s; this.store.save(); this.emitState();
     if (Object.keys(patch).some((k) => k === 'autoUpdateSubsMin')) this.scheduleAutoUpdate();

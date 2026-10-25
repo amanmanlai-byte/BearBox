@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs'); const os = require('os'); const path = require('path');
-const { GeoService, resolveHost } = require('../src/backend/geo');
+const { GeoService, resolveHost, assessPurity } = require('../src/backend/geo');
 
 const GEO = { ip: '1.2.3.4', country: 'Japan', country_code: 'JP', region: 'Tokyo', city: 'Tokyo', isp: 'Amazon', asn: 16509, latitude: 35.6, longitude: 139.7 };
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'jj-geo-'));
@@ -79,4 +79,24 @@ test('geo cache file survives a new service instance', async () => {
   const g = await b.lookup('3.3.3.3');
   assert.equal(g.ip, '1.2.3.4');
   assert.equal(t.calls.direct.length, 1); // still only the first fetch
+});
+
+test('assessPurity classifies datacenter vs residential ISPs (ip.sb derived)', () => {
+  const dc = assessPurity({ isp: 'Amazon.com', organization: 'AWS', asn_organization: 'Amazon.com, Inc.', latitude: 1, longitude: 2 });
+  assert.equal(dc.level, '机房'); assert.ok(dc.score <= 45); assert.match(dc.basis, /机房|云网|云商|命中/);
+  const res = assessPurity({ isp: 'Henan Mobile Communications', asn_organization: 'China Mobile', latitude: 1, longitude: 2 });
+  assert.equal(res.level, '住宅'); assert.ok(res.score >= 90);
+  const mid = assessPurity({ isp: 'Example Net Ltd', latitude: 1, longitude: 2 });
+  assert.equal(mid.level, '一般'); assert.ok(mid.score >= 60 && mid.score < 90);
+  assert.equal(assessPurity(null), null);
+  assert.equal(assessPurity({ error: 'x' }), null);
+  // disclosure note must be present (it is a heuristic, not a risk database)
+  assert.match(res.note, /ip\.sb/);
+});
+
+test('self() carries the purity assessment', async () => {
+  const t = mkT();
+  const svc = new GeoService({ userData: tmp(), getProxy: () => null, transports: t.transports });
+  const g = await svc.self();
+  assert.ok(g.purity && Number.isFinite(g.purity.score));
 });

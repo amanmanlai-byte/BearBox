@@ -517,15 +517,27 @@ PAGES.geo = () => {
   // ---- IP detection card (redesigned port of the Android IP 检测 feature; data via ip.sb)
   const exitIp = h('b', { class: 'ip' }, '检测中…');
   const exitTag = h('span', { class: 'tag accent', style: { visibility: 'hidden' } }, '');
+  const purityRing = h('span', { class: 'purity', title: 'IP 纯净度：基于 ip.sb 的 ISP/ASN 归属推断（机房/住宅/一般），非商业风控数据库评分' },
+    h('b', { class: 'purity-score' }, '-'), h('span', { class: 'purity-label' }, '纯净度'));
+  const purityBasis = h('div', { class: 'meta', style: { display: 'none' } }, '');
   const exitLoc = h('div', { class: 'loc' }, '');
   const exitMeta = h('div', { class: 'meta' }, '来源 ip.sb');
   const directIp = h('div', { class: 'v' }, '检测中…');
   const directLoc = h('div', { class: 'loc', style: { fontSize: '12px' } }, '');
   const checkedAt = new Date();
   const fillIpCard = (geo, err) => {
-    if (err) { exitIp.textContent = '检测失败'; exitTag.style.visibility = 'hidden'; exitLoc.textContent = err; exitMeta.textContent = '来源 ip.sb'; return; }
+    if (err) { exitIp.textContent = '检测失败'; exitTag.style.visibility = 'hidden'; purityRing.style.display = 'none'; exitLoc.textContent = err; exitMeta.textContent = '来源 ip.sb'; return; }
     exitIp.textContent = geo.ip || '-';
     exitTag.textContent = geo.country_code || ''; exitTag.style.visibility = geo.country_code ? 'visible' : 'hidden';
+    const pu = geo.purity;
+    if (pu) {
+      purityRing.style.display = '';
+      purityRing.querySelector('.purity-score').textContent = pu.score;
+      purityRing.classList.remove('good', 'mid', 'bad');
+      purityRing.classList.add(pu.score >= 85 ? 'good' : pu.score >= 60 ? 'mid' : 'bad');
+      purityRing.title = `IP 纯净度 ${pu.score}（${pu.level}）：${pu.basis}。${pu.note}`;
+      purityBasis.style.display = ''; purityBasis.textContent = `纯净度 ${pu.score} · ${pu.level} — ${pu.basis}`;
+    } else { purityRing.style.display = 'none'; purityBasis.style.display = 'none'; }
     exitLoc.textContent = [geo.city, geo.region, geo.country].filter(Boolean).join(' · ');
     exitMeta.textContent = `检测于 ${new Date().toLocaleTimeString()} · 来源 ip.sb · ${geo.isp || ''}${geo.asn ? ' (AS' + geo.asn + ')' : ''}`;
   };
@@ -685,9 +697,9 @@ PAGES.geo = () => {
     h('div', { class: 'card ipcard', style: { marginBottom: '14px' } },
       h('div', { class: 'ipmain' },
         h('div', { class: 'k', style: { fontSize: '12px', color: 'var(--ink-3)' } }, running ? 'IP 检测 · 经当前节点出口' : 'IP 检测 · 本机公网（直连）'),
-        h('div', { class: 'iprow' }, exitIp, exitTag,
+        h('div', { class: 'iprow' }, exitIp, exitTag, purityRing,
           h('button', { class: 'btn small ghost', title: '复制 IP', onclick: () => navigator.clipboard.writeText(exitIp.textContent).then(() => toast('已复制')) }, '复制')),
-        exitLoc, exitMeta),
+        exitLoc, exitMeta, purityBasis),
       h('div', { class: 'ipside' },
         h('div', { class: 'k', style: { fontSize: '12px', color: 'var(--ink-3)' } }, '直连公网'),
         directIp, directLoc)),
@@ -874,15 +886,21 @@ PAGES.settings = () => {
           s.wallpaper ? h('span', { class: 'tag ok' }, '已启用') : h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, '未设置')), 1, '图片会拷贝到程序数据目录，浅色/深色主题下自动叠加对应遮罩'),
         (() => {
           const debounce = { t: null };
-          const live = (key, val) => { // instant preview, persisted shortly after
-            document.documentElement.style.setProperty(key === 'wallpaperOpacity' ? '--wp-o' : key === 'wallpaperVeil' ? '--wp-veil' : '--wp-blur',
-              key === 'wallpaperBlur' ? val + 'px' : val);
+          // sliders run on percent scales (10-100 / 0-95); convert to the stored fraction.
+          // The raw value used to be persisted as-is (e.g. 55), which clamped opacity to 1 -
+          // that was the "wallpaper opacity does nothing" bug.
+          const toStored = (key, raw) => (key === 'wallpaperBlur' ? Number(raw) : Number(raw) / 100);
+          const cssVar = (key) => (key === 'wallpaperOpacity' ? '--wp-o' : key === 'wallpaperVeil' ? '--wp-veil' : '--wp-blur');
+          const initial = (key) => (key === 'wallpaperBlur' ? (Number(s[key]) || 0) : Math.round((Number(s[key]) || 0) * 100));
+          const live = (key, raw) => { // instant preview, persisted shortly after
+            const stored = toStored(key, raw);
+            document.documentElement.style.setProperty(cssVar(key), key === 'wallpaperBlur' ? stored + 'px' : stored);
             clearTimeout(debounce.t);
-            debounce.t = setTimeout(() => api('setSettings', { [key]: Number(val) }).catch(() => {}), 350);
+            debounce.t = setTimeout(() => api('setSettings', { [key]: stored }).catch(() => {}), 350);
           };
           const slider = (key, label, min, max, step, fmt) => {
-            const val = h('span', { class: 'mut2', style: { fontSize: '11.5px', minWidth: '38px', textAlign: 'right' } }, fmt(s[key]));
-            const r = h('input', { type: 'range', min, max, step, value: s[key], 'aria-label': label, oninput: (e) => { val.textContent = fmt(Number(e.target.value)); live(key, e.target.value); } });
+            const val = h('span', { class: 'mut2', style: { fontSize: '11.5px', minWidth: '38px', textAlign: 'right' } }, fmt(initial(key)));
+            const r = h('input', { type: 'range', min, max, step, value: initial(key), 'aria-label': label, oninput: (e) => { val.textContent = fmt(Number(e.target.value)); live(key, e.target.value); } });
             return h('div', { class: 'field' }, h('label', {}, label), h('div', { class: 'toolbar' }, r, val));
           };
           const pct = (v) => Math.round(v * 100) + '%';

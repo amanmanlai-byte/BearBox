@@ -78,11 +78,16 @@ body.wallpaper .side { background: color-mix(in srgb, var(--sidebar) 90%, transp
 body.wallpaper .logs { background: color-mix(in srgb, var(--card) 90%, transparent); }
 body.wallpaper .tbl th { background: color-mix(in srgb, var(--card-2) 92%, transparent); }
 
-/* frosted glass: independent opacity for card surfaces, text color untouched */
-body.glass .card { background: color-mix(in srgb, var(--card) var(--glass-pct, 60%), transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
-body.glass .side { background: color-mix(in srgb, var(--sidebar) var(--glass-pct, 60%), transparent); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
-body.glass .logs { background: color-mix(in srgb, var(--card) var(--glass-pct, 60%), transparent); }
-body.glass .tbl th { background: color-mix(in srgb, var(--card-2) var(--glass-pct, 60%), transparent); }
+/* frosted glass: independent opacity for card surfaces, text color untouched.
+   Light theme: pure white at high opacity reads as glare - lean the surface toward
+   the muted canvas tone and soften the border instead of stark white. */
+body.glass .card { background: color-mix(in srgb, var(--card) var(--glass-pct), var(--card-2)); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+body.glass .side { background: color-mix(in srgb, var(--sidebar) var(--glass-pct), var(--card-2)); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); }
+body.glass .logs { background: color-mix(in srgb, var(--card) var(--glass-pct), var(--card-2)); }
+body.glass .tbl th { background: color-mix(in srgb, var(--card-2) var(--glass-pct), var(--card-2)); }
+[data-theme=dark] body.glass .card, [data-theme=dark] body.glass .side, [data-theme=dark] body.glass .logs { background: color-mix(in srgb, var(--card) var(--glass-pct), transparent); }
+[data-theme=dark] body.glass .tbl th { background: color-mix(in srgb, var(--card-2) var(--glass-pct), transparent); }
+body.glass .card, body.glass .side { border-color: color-mix(in srgb, var(--line) 70%, transparent); }
 body.glass .modal { background: color-mix(in srgb, var(--card) 92%, transparent); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px); }
 
 input[type=range] { accent-color: var(--accent); width: 100%; }
@@ -102,6 +107,13 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 .ipcard .meta { font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
 .ipcard .ipside { flex: 1; border-left: 1px solid var(--line); padding-left: 18px; display: flex; flex-direction: column; gap: 3px; justify-content: center; min-width: 0; }
 .ipcard .ipside .v { font-family: var(--mono); font-size: 15px; font-weight: 600; }
+/* purity chip in the IP card */
+.purity { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 12px; font-size: 12px; border: 1px solid var(--line); cursor: help; }
+.purity .purity-score { font-size: 13px; font-variant-numeric: tabular-nums; }
+.purity .purity-label { color: var(--ink-3); font-size: 11px; }
+.purity.good { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.purity.mid { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.purity.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
 
 /* ---------------- motion (medium, restrained) ---------------- */
 .page-nav { animation: pageIn .16s ease-out; }
