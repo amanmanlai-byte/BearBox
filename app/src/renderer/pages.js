@@ -559,7 +559,12 @@ function purityDetail(g, pu) {
 }
 
 // ================================================================ geo map
-let WORLD_GEO = null; // world GeoJSON loaded once per app run
+let WORLD_GEO = null;
+// Cross-page geo cache: survives sidebar switches so re-entering the map page
+// shows the last known positions instantly instead of re-querying everything.
+// TTL: exit/direct 2 min (the exit IP changes only when the node changes),
+// node 10 min (server IPs are essentially static), targets never cached (live).
+const GEO_CACHE = { exit: null, exitAt: 0, direct: null, directAt: 0, node: null, nodeSelId: null, nodeServer: null, nodeAt: 0 }; // world GeoJSON loaded once per app run
 PAGES.geo = () => {
   const S = X.S;
   const running = isRunning();
@@ -699,27 +704,53 @@ PAGES.geo = () => {
   const draw = () => { flatDraw(); globeFeed(); };
 
   let alive = true; let targetTimer = null; let drawTimer = null; let selfTimer = null; let nodeTimer = null;
+  const runningNow = () => X.S && X.S.core.state === 'running';
+  const exitFresh = () => GEO_CACHE.exit && Date.now() - GEO_CACHE.exitAt < 120000;
+  const directFresh = () => GEO_CACHE.direct && Date.now() - GEO_CACHE.directAt < 120000;
+  const nodeFresh = () => GEO_CACHE.node && GEO_CACHE.nodeSelId === X.S.selectedId && Date.now() - GEO_CACHE.nodeAt < 600000;
   const refreshSelf = async () => {
-    try { const g = await api('geoSelf', {}); if (!alive) return; state.exit = g; fillIpCard(g); } catch (e) { if (alive) { state.exit = { error: e.message }; fillIpCard(null, e.message); } }
-    try { const g = await api('geoSelf', { direct: true }); if (!alive) return; state.direct = g; fillDirect(g); } catch (e) { if (alive) fillDirect(null, e.message); }
-    draw();
+    // seed from cache first so re-entering the page is instant
+    if (exitFresh()) { state.exit = GEO_CACHE.exit; fillIpCard(GEO_CACHE.exit); }
+    if (directFresh()) { state.direct = GEO_CACHE.direct; fillDirect(GEO_CACHE.direct); }
+    // the two lookups are independent: run them in parallel, fill each card as soon
+    // as its own response lands (the exit card no longer waits for the direct one)
+    const exitP = (async () => {
+      try {
+        const g = await api('geoSelf', {});
+        if (!alive) return;
+        state.exit = g; GEO_CACHE.exit = g; GEO_CACHE.exitAt = Date.now();
+        fillIpCard(g);
+      } catch (e) { if (alive && !exitFresh()) { state.exit = { error: e.message }; fillIpCard(null, e.message); } }
+      draw();
+    })();
+    const directP = (async () => {
+      try {
+        const g = await api('geoSelf', { direct: true });
+        if (!alive) return;
+        state.direct = g; GEO_CACHE.direct = g; GEO_CACHE.directAt = Date.now();
+        fillDirect(g);
+      } catch (e) { if (alive && !directFresh()) fillDirect(null, e.message); }
+    })();
+    await Promise.allSettled([exitP, directP]);
   };
-  const refreshNode = async () => {
+    const refreshNode = async () => {
     const sel = X.S.nodes.find((n) => n.id === X.S.selectedId);
-    if (!sel) { fillExitNode(); state.node = null; draw(); return; }
-    fillExitNode();
+    if (!sel) { state.node = null; fillExitNode(); draw(); return; }
+    // cache hit: same node still fresh -> show instantly, skip the network entirely
+    if (nodeFresh()) { state.node = GEO_CACHE.node; fillExitNode(); draw(); return; }
     try {
+      // only the selected server: fast (single DNS + cached lookup), no waiting on the rest
       const all = await api('geoNodes', { servers: [sel.server] });
       if (!alive) return;
       const g = all[sel.server];
       if (g && !g.error) {
         state.node = g; g_ = g;
-        fillExitNode();
-      }
-      else { state.node = null; fillNode({ error: (g && g.error) || '查询失败' }); }
-    } catch (e) { if (alive) fillNode({ error: e.message }); }
+        GEO_CACHE.node = g; GEO_CACHE.nodeSelId = sel.id; GEO_CACHE.nodeServer = sel.server; GEO_CACHE.nodeAt = Date.now();
+      } else state.node = null;
+    } catch { /* keep cache */ }
+    fillExitNode();
     draw();
-  };
+  };;
   const refreshTargets = async () => {
     if (!isRunning()) { state.targets = []; state.targetGeos = []; draw(); return; }
     try {
