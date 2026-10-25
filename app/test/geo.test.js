@@ -118,9 +118,8 @@ test('lookupPurity fetches from ip.net.coffee and maps risk flags', async () => 
   assert.equal(calls.direct[0][0], 'ip.net.coffee');
   assert.equal(calls.direct[0][1], '/api/ip/lookup/8.8.8.8');
   // trust_score 63 → base roundHalfUp(6.3)=6, datacenter -2 → 4, score=40, level=机房
-  assert.equal(r.score10, 4.5); // roundHalfUp(63/10)=6.5, dc -2 → 4.5
-  assert.equal(r.score, 45); // 0-100 for our UI
-  assert.ok(r.level === '机房' || r.level === '一般');
+  assert.equal(r.score, 63); // trust_score displayed directly
+  assert.equal(r.level, '机房');
   assert.equal(r.type, '机房/云商');
   assert.equal(r.company, 'Google LLC');
   assert.equal(r.source, 'ip.net.coffee');
@@ -137,7 +136,7 @@ test('lookupPurity maps VPN/Tor/abuser flags to 风险 level', async () => {
   const t = { viaProxy: async () => { throw new Error('no'); }, direct: async () => JSON.stringify(mockResp) };
   const r = await lookupPurity('1.2.3.4', { transports: t });
   assert.equal(r.level, '风险');
-  assert.ok(r.score10 <= 9); // risk caps at 9
+
   assert.ok(r.flags.includes('VPN'));
   assert.ok(r.flags.includes('代理'));
   assert.ok(r.flags.includes('历史滥用记录'));
@@ -152,6 +151,6 @@ test('lookupPurity falls back to direct when proxy fails', async () => {
   };
   const r = await lookupPurity('5.6.7.8', { proxy: { host: 'x', port: 1 }, transports: t });
   assert.equal(calls.d, 1);
-  assert.equal(r.score, 100); // base 9 + native 0.5 + human 0.5 = 10 → 100
-  assert.equal(r.level, '纯净');
+  assert.equal(r.score, 90); // trust_score direct
+  assert.equal(r.level, '住宅');
 });

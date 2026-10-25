@@ -166,42 +166,21 @@ async function lookupPurity(ip, { proxy = null, transports = null, timeoutMs = 1
   if (j.is_abuser) flags.push('历史滥用记录');
   if (j.is_crawler) flags.push('爬虫标记');
   const type = j.is_datacenter ? '机房/云商' : j.isResidential ? '住宅' : j.is_mobile ? '移动蜂窝' : j.company_type || '未知';
-  // ip.net.coffee displays purity on a 0-10 scale: base = roundHalfUp(trust_score / 10),
-  // then penalties (datacenter -2, broadcast -1, business -0.5, abuser -0.5..2, honeypot -1..2, crawler -0.5),
-  // clamped 0-10; risk caps at 9. This replicates their visible scoring.
-  const trust = typeof j.trust_score === 'number' ? j.trust_score : 50;
-  const roundHalfUp = (v) => Math.round(v * 2) / 2;
-  let score10 = roundHalfUp(trust / 10);
-  const dc = !!(j.is_datacenter || j.company_type === 'hosting' || j.asn_kind === 'hosting');
-  if (dc) score10 -= 2;
-  const native = !!(j.isResidential && !dc);
-  const human = !!(j.isResidential || j.is_mobile);
-  const business = !!(j.company_type === 'business');
-  if (native) score10 += 0.5;
-  if (human) score10 += 0.5;
-  if (business) score10 -= 0.5;
-  const intel = j.intelligence || {};
-  const abRaw = parseFloat(intel.abuser_score_raw != null ? intel.abuser_score_raw : j.abuser_score);
-  if (isFinite(abRaw)) { if (abRaw > 0.05) score10 -= 2; else if (abRaw > 0.025) score10 -= 1; else if (abRaw > 0.01) score10 -= 0.5; }
-  const hpRaw = parseFloat(intel.rep_threat != null ? intel.rep_threat : intel.httpbl_threat);
-  const hpPen = (isFinite(hpRaw) && hpRaw > 0) ? (hpRaw <= 25 ? 1 : 2) : 0;
-  score10 -= hpPen;
-  if (j.is_crawler) score10 -= 0.5;
-  score10 = Math.max(0, Math.min(10, roundHalfUp(score10)));
-  const risky = flags.length > 0;
-  if (risky && score10 > 9) score10 = 9;
-  // convert to 0-100 for our UI display (matching ip.net.coffee's visual percentage)
-  const score = Math.round(score10 * 10);
-  const level = risky ? '风险' : score10 >= 8 ? '纯净' : dc ? '机房' : score10 >= 5 ? '一般' : '较低';
+  // User instruction: trust_score IS the total score. Display it directly, no recalculation.
+  const score = typeof j.trust_score === 'number' ? j.trust_score : null;
+  const level = flags.length > 0 ? '风险'
+    : j.is_datacenter || j.company_type === 'hosting' ? '机房'
+    : j.isResidential ? '住宅'
+    : j.is_mobile ? '移动' : '一般';
   return {
-    score, level, flags, type, score10,
+    score, level, flags, type,
     company: j.company_name || j.asOrganization || '',
     asn: j.asn || null,
     trustScore: j.trust_score,
     redditBlocked: j.reddit_blocked === true,
-    abuserScore: intel.abuser_score_raw || j.abuser_score || '',
-    abuserLevel: intel.abuser_level || '',
-    threats: Array.isArray(intel.threats) ? intel.threats : [],
+    abuserScore: (j.intelligence || {}).abuser_score_raw || j.abuser_score || '',
+    abuserLevel: (j.intelligence || {}).abuser_level || '',
+    threats: Array.isArray((j.intelligence || {}).threats) ? (j.intelligence || {}).threats : [],
     aiVerdict: j.ai_verdict ? { label: j.ai_verdict.label, confidence: j.ai_verdict.confidence, reasoning: j.ai_verdict.reasoning } : null,
     rawData: { is_datacenter: j.is_datacenter, isResidential: j.isResidential, is_vpn: j.is_vpn, is_proxy: j.is_proxy, is_tor: j.is_tor, is_abuser: j.is_abuser, is_mobile: j.is_mobile, is_crawler: j.is_crawler, company_type: j.company_type },
     source: 'ip.net.coffee',
