@@ -280,12 +280,49 @@ class AppService extends EventEmitter {
   async importRuleFile(text) {
     const { rules, warnings, skipped } = parseRuleFile(text);
     if (!rules.length) { const e = new Error(warnings[0] || '没有可导入的规则'); e.warnings = warnings; throw e; }
+    const sig = (r) => JSON.stringify([r.domain || '', r.ip || '', r.port || '', r.sourceIp || '', r.sourcePort || '', r.processName || '', r.network || 'any', r.protocol || '', r.outbound || 'proxy']);
+    const existing = new Set(this.d.rules.map(sig));
+    let dup = 0;
     for (const r of rules) {
+      const s = sig(r);
+      if (existing.has(s)) { dup++; continue; } // re-importing the same file must not double the rules (BUG J-02)
+      existing.add(s);
       this.d.rules.push({ id: this.store.id(), name: r.name || '导入规则', enabled: r.enabled !== false, domain: r.domain || '', ip: r.ip || '', port: r.port || '', sourceIp: r.sourceIp || '', sourcePort: r.sourcePort || '', processName: r.processName || '', network: r.network || 'any', protocol: r.protocol || '', outbound: r.outbound || 'proxy' });
     }
     this.store.save(); this.emitState();
     if (this.core.state === 'running') await this.restart();
-    return { imported: rules.length, skipped, warnings: warnings.slice(0, 10) };
+    return { imported: rules.length - dup, skipped, dup, warnings: warnings.slice(0, 10) };
+  }
+
+  // ---------- toolbox: backup / export ----------
+  /** Full data backup (settings, subscriptions, nodes, rules, daily stats). Contains credentials. */
+  exportBackup() {
+    this.store.flush();
+    return JSON.stringify({ app: 'JiajiaBox', backupVersion: 1, exportedAt: new Date().toISOString(), data: this.d }, null, 2);
+  }
+
+  /** Restore a backup produced by exportBackup. Validates the shape before replacing anything. */
+  async importBackup(text) {
+    let j;
+    try { j = JSON.parse(String(text)); } catch { throw new Error('不是有效的 JSON 备份文件'); }
+    if (!j || j.app !== 'JiajiaBox' || !j.data || !Array.isArray(j.data.nodes) || !Array.isArray(j.data.subscriptions)) throw new Error('不是 JiajiaBox 备份文件（缺少数据结构）');
+    const wasRunning = this.core.state === 'running';
+    if (wasRunning) await this.stop();
+    const d = j.data;
+    d.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
+    d.rules = Array.isArray(d.rules) ? d.rules : [];
+    d.daily = d.daily && typeof d.daily === 'object' ? d.daily : {};
+    d.selectedId = d.nodes.some((n) => n.id === d.selectedId) ? d.selectedId : (d.nodes[0] && d.nodes[0].id) || null;
+    d.secret = d.secret || this.d.secret;
+    this.store.data = d; this.store.flush(); this.emitState();
+    if (wasRunning) await this.start().catch((e) => { this.lastError = '恢复备份后重启内核失败：' + e.message; });
+    return { ok: true, nodes: d.nodes.length, subscriptions: d.subscriptions.length };
+  }
+
+  /** The exact sing-box config that would be written for the current state (for export/inspection). */
+  exportCoreConfig() {
+    const { config } = this.build();
+    return JSON.stringify(config, null, 2);
   }
 
   /** Import a subscription from a local file's content (same formats as URL subscriptions). */
@@ -294,10 +331,22 @@ class AppService extends EventEmitter {
     if (!parsed.nodes.length) throw new Error('文件中没有解析出任何节点' + (parsed.errors[0] ? `（${parsed.errors[0].error}）` : ''));
     let sub = this.d.subscriptions.find((s) => !s.url && s.name === (name || '手动导入'));
     if (!sub) { sub = { id: this.store.id(), name: name || '手动导入', url: null, updatedAt: Date.now(), info: null, error: null }; this.d.subscriptions.push(sub); }
-    const existing = this.d.nodes.filter((n) => n.subId === sub.id).map((n) => n.outbound);
-    this._ingest(sub, { nodes: [...existing, ...parsed.nodes], errors: parsed.errors, format: parsed.format });
+    // file imports replace that subscription's nodes (same semantics as a URL update);
+    // appending here used to duplicate nodes on every re-import (BUG J-01)
+    this._ingest(sub, parsed);
     sub.updatedAt = Date.now(); this.store.save(); this.emitState();
     return { count: parsed.nodes.length, errors: parsed.errors };
+  }
+
+  /** Rename a subscription (manual imports included). */
+  async renameSubscription(id, name) {
+    const sub = this.d.subscriptions.find((s) => s.id === id);
+    if (!sub) throw new Error('订阅不存在');
+    const n = String(name || '').trim();
+    if (!n) throw new Error('名称不能为空');
+    if (this.d.subscriptions.some((s) => s.id !== id && s.name === n)) throw new Error('已有同名订阅');
+    sub.name = n; this.store.save(); this.emitState();
+    return { ok: true };
   }
 
   // ---------- stats ----------

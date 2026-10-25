@@ -213,11 +213,12 @@ PAGES.nodes = () => {
         n.latency != null ? n.latency + ' ms' : cls === 'bad' ? '超时' : '未测试'),
       n.latencyKind ? h('span', { class: 'tag', style: { marginLeft: '6px' } }, n.latencyKind === 'url' ? 'HTTPS' : 'TCP') : null));
   };
-  const rows = list.map((n) => {
+  const grouped = X.nodeSort === 'default' && !filter && X.nodeSubFilter === 'all' && S.subscriptions.length > 1;
+  const rowEls = list.map((n) => {
     const tr = h('tr', { class: 'pick' + (n.id === S.selectedId ? ' sel' : ''), 'data-nid': n.id, onclick: () => act(() => api('selectNode', { id: n.id }), `已切换到 ${n.tag}`) },
       h('td', { style: { width: '34px' } }, h('span', { class: 'radio' + (n.id === S.selectedId ? ' on' : '') })),
       h('td', { title: n.tag }, h('div', { style: { overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '260px', whiteSpace: 'nowrap' } }, n.tag),
-        n.subId ? h('div', { class: 'mut2', style: { fontSize: '11px' } }, subName(n.subId)) : null),
+        grouped ? null : (n.subId ? h('div', { class: 'mut2', style: { fontSize: '11px' } }, subName(n.subId)) : null)),
       h('td', {}, h('span', { class: 'tag' }, n.type)),
       h('td', { class: 'mono mut2' }, `${n.server}:${n.port}`),
       latCellFor(n),
@@ -227,6 +228,18 @@ PAGES.nodes = () => {
         h('button', { class: 'btn small danger', onclick: (e) => { e.stopPropagation(); if (confirm(`删除节点“${n.tag}”？`)) act(() => api('removeNode', { id: n.id }), '已删除'); } }, '删除')));
     return tr;
   });
+  const rows = [];
+  if (grouped) {
+    let lastSub = null;
+    list.forEach((n, i) => {
+      if (n.subId !== lastSub) {
+        lastSub = n.subId;
+        const cnt = list.filter((x) => x.subId === n.subId).length;
+        rows.push(h('tr', { class: 'subgroup' }, h('td', { colspan: 6 }, h('span', { class: 'tag accent' }, subName(n.subId)), ` ${cnt} 个节点`)));
+      }
+      rows.push(rowEls[i]);
+    });
+  } else rows.push(...rowEls);
 
   const search = h('input', { type: 'text', placeholder: '搜索名称、地址、协议、订阅', value: X.nodeFilter, style: { width: '230px' }, 'aria-label': '搜索节点', 'data-keep': 'nodeFilter',
     oninput: (e) => { X.nodeFilter = e.target.value; window.__render(); } });
@@ -268,6 +281,13 @@ PAGES.nodes = () => {
     },
   };
 };
+
+function renameSub(s) {
+  const inp = h('input', { type: 'text', value: s.name, style: { width: '100%' } });
+  modal('重命名订阅', h('div', { class: 'field' }, h('label', {}, '新名称'), inp),
+    (close) => [h('button', { class: 'btn', onclick: close }, '取消'),
+      h('button', { class: 'btn primary', onclick: (e) => act(async () => { await api('renameSub', { id: s.id, name: inp.value }); close(); }, '已重命名', e.currentTarget) }, '保存')]);
+}
 
 function nodeDetail(n) {
   const raw = JSON.stringify({ id: n.id, tag: n.tag, type: n.type, server: n.server, port: n.port, latency: n.latency, latencyKind: n.latencyKind, testedAt: n.testedAt ? new Date(n.testedAt).toLocaleString() : null }, null, 2);
@@ -315,6 +335,7 @@ PAGES.subs = () => {
           s.errors && s.errors.length ? h('div', { class: 'note', style: { marginTop: '6px' } }, `${s.errors.length} 条未能识别（例如：${s.errors[0].error}）`) : null),
         h('div', { style: { display: 'flex', gap: '8px', flex: 'none' } },
           s.url ? h('button', { class: 'btn small', onclick: (e) => act(() => api('updateSub', { id: s.id }), (r) => `已更新，共 ${r.count} 个节点`, e.currentTarget) }, '更新') : null,
+          h('button', { class: 'btn small', title: '重命名', onclick: () => renameSub(s) }, '重命名'),
           h('button', { class: 'btn small danger', onclick: () => confirm(`删除订阅“${s.name}”及其全部节点？`) && act(() => api('removeSub', { id: s.id }), '已删除') }, '删除'))));
   });
 
@@ -688,6 +709,36 @@ PAGES.logs = () => {
       box),
     log: (l) => { if (!ok(l)) return; const stick = X.logFollow || (box.scrollTop + box.clientHeight >= box.scrollHeight - 30); box.append(line(l)); while (box.childElementCount > 800) box.firstChild.remove(); if (stick) box.scrollTop = box.scrollHeight; },
   };
+};
+
+// ================================================================ toolbox
+PAGES.toolbox = () => {
+  const S = X.S;
+  const item = (title, desc, btn) => h('div', { class: 'card', style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+    h('b', { style: { fontSize: '13.5px' } }, title),
+    h('div', { class: 'note' }, desc),
+    h('div', { style: { marginTop: 'auto' } }, btn));
+  const el = h('div', { class: 'page' },
+    pageHead('工具箱', '备份、导出与数据管理'),
+    h('div', { class: 'grid cols-2' },
+      item('导出配置备份', '把订阅、节点、规则、设置与流量历史导出为一个 JSON 文件，可跨机器恢复。注意：备份包含节点与订阅凭据，请妥善保管。',
+        h('button', { class: 'btn primary', onclick: (e) => act(() => api('exportBackup'), (r) => r && r.canceled ? '' : '备份已导出：' + r.path, e.currentTarget) }, '导出备份')),
+      item('导入配置备份', '恢复此前导出的备份，会覆盖当前的订阅、节点、规则与设置（流量历史一并恢复）。导入前建议先导出现有配置。',
+        h('button', { class: 'btn danger', onclick: (e) => {
+          if (!confirm('导入备份会覆盖当前全部配置数据，确定继续？')) return;
+          act(() => api('importBackup'), (r) => r && r.canceled ? '' : `已恢复备份：${r.nodes} 个节点、${r.subscriptions} 个订阅`, e.currentTarget);
+        } }, '导入备份')),
+      item('导出内核配置', '导出当前状态下实际生成并交给内核运行的 sing-box 配置（JSON），可用于排查或在新环境复刻。',
+        h('button', { class: 'btn', onclick: (e) => act(() => api('exportCoreConfig'), (r) => r && r.canceled ? '' : '内核配置已导出：' + r.path, e.currentTarget) }, '导出 sing-box 配置')),
+      item('打开数据目录', '打开配置文件所在文件夹（%APPDATA%\\JiajiaBox），包含 data.json 与地图 IP 缓存等。',
+        h('button', { class: 'btn', onclick: (e) => act(() => api('openDataDir'), '已打开数据目录', e.currentTarget) }, '打开目录'))),
+    h('div', { class: 'card', style: { marginTop: '14px' } }, h('h2', {}, '数据概览'),
+      h('div', { class: 'grid cols-4' },
+        h('div', { class: 'card tile' }, h('div', { class: 'k' }, '订阅'), h('div', { class: 'v' }, String(S.subscriptions.length))),
+        h('div', { class: 'card tile' }, h('div', { class: 'k' }, '节点'), h('div', { class: 'v' }, String(S.nodes.length))),
+        h('div', { class: 'card tile' }, h('div', { class: 'k' }, '自定义规则'), h('div', { class: 'v' }, String(S.rules.length))),
+        h('div', { class: 'card tile' }, h('div', { class: 'k' }, '流量记录天数'), h('div', { class: 'v' }, String(Object.keys(S.daily || {}).length))))));
+  return { el };
 };
 
 // ================================================================ settings

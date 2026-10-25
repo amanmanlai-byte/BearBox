@@ -10,6 +10,7 @@ const NAV = [
   ['geo', '地图', ICONS.globe],
   ['stats', '流量统计', ICONS.stats],
   ['logs', '运行日志', ICONS.logs],
+  ['toolbox', '工具箱', ICONS.toolbox],
   ['settings', '设置', ICONS.settings],
 ];
 // Shared mutable context: current state snapshot, live sample buffer, log buffer, UI prefs.
@@ -39,6 +40,7 @@ function stateSig(S) {
     S.routePreview.length, S.sysproxySupported,
   ]);
 }
+// sig fields that a toolbox export/import changes; the page itself re-renders via normal actions
 
 function renderNav() {
   const nav = document.getElementById('nav');

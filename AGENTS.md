@@ -9,17 +9,17 @@ Never overwrite the original sources. Work only under windows/ on branch windows
 ## Layout
 - windows/app/            Electron app (JavaScript, no bundler). Run: npm install, npm start. Test: npm test (36 tests, needs core/sing-box-windows-amd64.exe on Windows)
 - windows/app/src/backend Node backend with no Electron imports: links.js (share links), subscription.js (base64/clash yaml/sing-box json), config.js (sing-box 1.14 config builder + describeRule for the rules UI), core.js (process + Clash API polling, mapConnection), sysproxy.js (Windows registry + WinINet refresh), store.js, service.js (all app logic + subscription auto-update)
-- windows/app/src/main.js, preload.js   thin IPC wiring (single channel 'jj', handlers map in main.js); tray icon, close-to-tray, UAC elevation for TUN
+- windows/app/src/main.js, preload.js   thin IPC wiring (single channel 'jj', handlers map in main.js); tray icon, close-to-tray, UAC elevation for TUN; toolbox handlers (backup export/import, core config export, open data dir)
 - windows/app/src/renderer  8 pages in pages.js, hand drawn canvas charts in charts.js (SpeedChart/DailyBars with hover tooltips, drawDonut, drawSpark), design system in app.css (light + dark via [data-theme]), CSP is default-src 'self' (no inline styles; use element.style assignment)
 - windows/app/tools/make-icons.js  zero-dep icon generator (writes assets/icon.ico + icon.png + tray.png)
 - windows/kernel-build/   scripts and notes used to compile the kernel (needs Go, see README there)
 - Kernel binaries are not in git: put sing-box-windows-amd64.exe in windows/app/core/
 
-## Done and verified on a real Windows 10/11 machine (v0.2.2, Oct 2026)
-41 automated tests pass: share link parsing (vmess, vless incl. reality, trojan, ss incl. obfs, hysteria2, tuic, socks, http), subscription formats,
+## Done and verified on a real Windows 10/11 machine (autonomous round, Oct 2026; internal version label v0.2.0)
+61 automated tests pass (see TEST_REPORT.md for the current numbers and the Windows Root-store interactive-confirmation gotcha): share link parsing (vmess, vless incl. reality, trojan, ss incl. obfs, hysteria2, tuic, socks, http), subscription formats,
 config generation accepted by `sing-box check` (all protocols, rule/global mode, custom rules incl. per-process rules, TUN inbound, bundled local
 rule-sets), real traffic through a selected node, node switching, speed/connection/memory/daily traffic stats, URL delay test on Windows incl. the
-temp-start path (core auto-starts for testing when stopped, no system proxy touched, stops afterwards), rule edit restarts core, port conflict error,
+temp-start path (core auto-starts for testing when stopped, no system proxy touched, stops afterwards), node switching (verified pick + dropped old connections), toolbox backup round-trip, subscription rename, rule-file dedupe, sub-file replace semantics, rule edit restarts core, port conflict error,
 Windows system proxy set/restore + crash recovery, subscription auto-update timer, UI-only settings never restart the core, legacy test-URL migration.
 UI verified with DOM probes (0 JS errors on all 8 pages) and screenshots in both themes, plus a live run with real traffic (speed curve 6.39MB/s peak,
 connections table with real flows, per-process ranking identifying curl.exe). Packaged exe smoke tested (boots, renders, exits cleanly).
@@ -56,6 +56,9 @@ Node edit/create forms and node sorting beyond the three orders are not implemen
 ## Conventions
 Simplified Chinese UI text. No em dashes in user facing text. Keep backend free of Electron imports so it stays testable.
 Add a test for every backend change. Renderer is verified by screenshots + DOM probes (JIAJIA_SHOT_DIR / JIAJIA_SHOT_PAGES env hooks in main.js).
+
+## Docs
+PROJECT_STATUS.md / IMPLEMENTATION_PLAN.md / BUG_TRACKER.md / TEST_REPORT.md / CHANGELOG.md live at the repo root; keep them truthful - only mark tests that actually ran.
 
 ## Rebuild / package
 cd windows/app && npm install && npm test && npm run pack:win   (icon: npm run icons; output: windows/dist/JiajiaBox-win32-x64)

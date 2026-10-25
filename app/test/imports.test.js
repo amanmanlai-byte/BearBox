@@ -105,3 +105,62 @@ test('importSubFile ingests a local subscription file', async () => {
   assert.equal(svc.d.subscriptions[0].name, '本地文件');
   await assert.rejects(svc.importSubFile({ name: 'x', content: 'not a sub' }), /没有解析出/);
 });
+
+test('re-importing the same subscription file replaces instead of duplicating', async () => {
+  const fakeSys = { supported: false, async enable() { return { ok: true, backup: null }; }, async disable() { return { ok: true }; } };
+  const svc = new AppService({ userData: fs.mkdtempSync(path.join(os.tmpdir(), 'jj-sub2-')), appRoot: path.join(__dirname, '..'), sysproxy: fakeSys, binary: 'x.exe' });
+  const b64 = (s) => Buffer.from(s).toString('base64');
+  const content = 'ss://' + b64('aes-128-gcm:p1') + '@127.0.0.1:8388#f1\nss://' + b64('aes-128-gcm:p2') + '@127.0.0.1:8389#f2';
+  await svc.importSubFile({ name: '本地文件', content });
+  await svc.importSubFile({ name: '本地文件', content }); // same file twice
+  assert.equal(svc.d.nodes.length, 2, 'no #2-suffixed duplicates');
+  assert.ok(svc.d.nodes.every((n) => !/ #\d+/.test(n.outbound.tag)));
+});
+
+test('importRuleFile skips already-existing rules', async () => {
+  const fakeSys = { supported: false, async enable() { return { ok: true, backup: null }; }, async disable() { return { ok: true }; } };
+  const svc = new AppService({ userData: fs.mkdtempSync(path.join(os.tmpdir(), 'jj-rule-')), appRoot: path.join(__dirname, '..'), sysproxy: fakeSys, binary: 'x.exe' });
+  const first = await svc.importRuleFile('DOMAIN-SUFFIX,example.com,DIRECT');
+  assert.equal(first.imported, 1);
+  const second = await svc.importRuleFile('DOMAIN-SUFFIX,example.com,DIRECT');
+  assert.equal(second.imported, 0);
+  assert.equal(second.dup, 1);
+  assert.equal(svc.d.rules.length, 1);
+});
+
+test('subscription rename validates emptiness and duplicates', async () => {
+  const fakeSys = { supported: false, async enable() { return { ok: true, backup: null }; }, async disable() { return { ok: true }; } };
+  const svc = new AppService({ userData: fs.mkdtempSync(path.join(os.tmpdir(), 'jj-ren-')), appRoot: path.join(__dirname, '..'), sysproxy: fakeSys, binary: 'x.exe' });
+  const b64 = (s) => Buffer.from(s).toString('base64');
+  await svc.importSubFile({ name: '甲', content: 'ss://' + b64('aes-128-gcm:p') + '@127.0.0.1:1#a' });
+  await svc.importSubFile({ name: '乙', content: 'ss://' + b64('aes-128-gcm:p') + '@127.0.0.1:2#b' });
+  await assert.rejects(svc.renameSubscription(svc.d.subscriptions[0].id, ''), /不能为空/);
+  await assert.rejects(svc.renameSubscription(svc.d.subscriptions[0].id, '乙'), /同名/);
+  await svc.renameSubscription(svc.d.subscriptions[0].id, '主力');
+  assert.equal(svc.d.subscriptions[0].name, '主力');
+});
+
+test('backup export/import round-trips everything', async () => {
+  const fakeSys = { supported: false, async enable() { return { ok: true, backup: null }; }, async disable() { return { ok: true }; } };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jj-bak-'));
+  const svc = new AppService({ userData: dir, appRoot: path.join(__dirname, '..'), sysproxy: fakeSys, binary: 'x.exe' });
+  const b64 = (s) => Buffer.from(s).toString('base64');
+  await svc.importSubFile({ name: '备份源', content: 'ss://' + b64('aes-128-gcm:p') + '@127.0.0.1:1#bk1' });
+  await svc.importRuleFile('DOMAIN-SUFFIX,keep.example,DIRECT');
+  await svc.setSettings({ mixedPort: 2090 });
+  const backup = svc.exportBackup();
+  // wipe: a fresh service over the same dir must start empty, then restore
+  const svc2 = new AppService({ userData: dir, appRoot: path.join(__dirname, '..'), sysproxy: fakeSys, binary: 'x.exe' });
+  await svc2.init();
+  svc2.d.subscriptions = []; svc2.d.nodes = []; svc2.d.rules = []; svc2.d.selectedId = null;
+  svc2.store.flush();
+  assert.equal(svc2.d.nodes.length, 0);
+  const r = await svc2.importBackup(backup);
+  assert.equal(r.nodes, 1);
+  assert.equal(r.subscriptions, 1);
+  assert.equal(svc2.d.settings.mixedPort, 2090);
+  assert.equal(svc2.d.rules.length, 1);
+  assert.ok(svc2.d.nodes[0].outbound.tag === 'bk1');
+  await assert.rejects(svc2.importBackup('{"app":"other"}'), /不是 JiajiaBox 备份/);
+  await assert.rejects(svc2.importBackup('not json'), /JSON/);
+});

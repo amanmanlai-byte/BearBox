@@ -104,7 +104,29 @@ const handlers = {
     const content = fs.readFileSync(r.filePaths[0], 'utf8');
     return svc.importRuleFile(content);
   },
+  // ---------- toolbox ----------
+  exportBackup: async () => {
+    const file = `JiajiaBox-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    const r = await dialog.showSaveDialog(win, { title: '导出配置备份', defaultPath: file, filters: [{ name: 'JiajiaBox 备份', extensions: ['json'] }] });
+    if (r.canceled || !r.filePath) return { canceled: true };
+    fs.writeFileSync(r.filePath, svc.exportBackup(), 'utf8');
+    return { ok: true, path: r.filePath };
+  },
+  importBackup: async () => {
+    const r = await dialog.showOpenDialog(win, { title: '导入配置备份', filters: [{ name: 'JiajiaBox 备份', extensions: ['json'] }], properties: ['openFile'] });
+    if (r.canceled || !r.filePaths[0]) return { canceled: true };
+    const content = fs.readFileSync(r.filePaths[0], 'utf8');
+    return svc.importBackup(content);
+  },
+  exportCoreConfig: async () => {
+    const r = await dialog.showSaveDialog(win, { title: '导出当前内核配置', defaultPath: 'sing-box-config.json', filters: [{ name: 'sing-box 配置', extensions: ['json'] }] });
+    if (r.canceled || !r.filePath) return { canceled: true };
+    fs.writeFileSync(r.filePath, svc.exportCoreConfig(), 'utf8');
+    return { ok: true, path: r.filePath };
+  },
+  openDataDir: () => { shell.openPath(app.getPath('userData')); return { ok: true }; },
   updateSub: (a) => svc.updateSubscription(a.id),
+  renameSub: (a) => svc.renameSubscription(a.id, a.name),
   updateAllSubs: () => svc.updateAllSubscriptions(),
   removeSub: (a) => svc.removeSubscription(a.id),
   selectNode: (a) => svc.selectNode(a.id),
@@ -208,7 +230,7 @@ async function runShots(dir) {
   if (process.env.JIAJIA_PROBE) {
     try { console.log('PROBE', JSON.stringify(await win.webContents.executeJavaScript(process.env.JIAJIA_PROBE))); } catch (e) { console.log('PROBE_ERR', e.message); }
   }
-  for (const page of (process.env.JIAJIA_SHOT_PAGES || 'home,nodes,subs,rules,conns,geo,stats,logs,settings').split(',')) {
+  for (const page of (process.env.JIAJIA_SHOT_PAGES || 'home,nodes,subs,rules,conns,geo,stats,logs,toolbox,settings').split(',')) {
     await win.webContents.executeJavaScript(`window.__go && window.__go(${JSON.stringify(page)})`);
     await new Promise((r) => setTimeout(r, Number(process.env.JIAJIA_SHOT_WAIT || 700)));
     const img = await win.webContents.capturePage();
