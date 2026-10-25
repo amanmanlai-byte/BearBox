@@ -209,7 +209,7 @@ PAGES.nodes = () => {
     const cls = latClass(n);
     return h('td', {}, h('div', { class: 'lat' },
       h('div', { class: 'bar' }, n.latency != null ? h('b', { style: { width: Math.max(4, (n.latency / maxLat) * 100) + '%', background: LAT_COLOR[cls] } }) : null),
-      h('span', { style: { color: cls === 'bad' ? 'var(--bad)' : 'var(--ink-2)', fontSize: '11.5px', fontVariantNumeric: 'tabular-nums' } },
+      h('span', { style: { color: n.latency != null ? LAT_COLOR[cls] : cls === 'bad' ? 'var(--bad)' : 'var(--ink-3)', fontSize: '11.5px', fontWeight: 600, fontVariantNumeric: 'tabular-nums' } },
         n.latency != null ? n.latency + ' ms' : cls === 'bad' ? '超时' : '未测试'),
       n.latencyKind ? h('span', { class: 'tag', style: { marginLeft: '6px' } }, n.latencyKind === 'url' ? 'HTTPS' : 'TCP') : null));
   };
@@ -258,13 +258,14 @@ PAGES.nodes = () => {
         h('thead', {}, h('tr', {}, h('th', { style: { width: '34px' } }, ''), h('th', {}, '名称'), h('th', {}, '协议'), h('th', {}, '地址'), h('th', {}, '延迟'), h('th', { class: 'r' }, '操作'))),
         h('tbody', {}, rows.length ? rows : h('tr', {}, h('td', { colspan: 6, class: 'mut2', style: { textAlign: 'center', padding: '26px' } }, '没有匹配的节点')))));
 
-  const testAll = h('button', { class: 'btn primary', disabled: S.nodes.length === 0, onclick: (e) => act(() => api('testNodes', {}), (r) => r.mode === 'url' ? `URL 测速完成（${r.count} 个节点，并发 ${S.settings.testConcurrency}）` : `内核未能启动，已降级为 TCP 连接测试（${r.error || '未知原因'}）`, e.currentTarget) }, 'URL 测速全部');
+  // 「URL 测速全部」在测速进行中变为「停止测速」（后端可中断，队列中的节点被丢弃）
+  const mkTestBtn = (testing) => testing
+    ? h('button', { class: 'btn danger', onclick: (e) => act(() => api('stopTestNodes'), undefined, e.currentTarget) }, '停止测速')
+    : h('button', { class: 'btn primary', disabled: S.nodes.length === 0, onclick: (e) => act(() => api('testNodes', {}), (r) => r.stopped ? `测速已停止（完成 ${r.done}/${r.count}）` : r.mode === 'url' ? `URL 测速完成（${r.count} 个节点，并发 ${S.settings.testConcurrency}）` : `内核未能启动，已降级为 TCP 连接测试（${r.error || '未知原因'}）`, e.currentTarget) }, 'URL 测速全部');
   const tbody = body.querySelector ? body.querySelector('tbody') : null;
   return {
-    el: h('div', { class: 'page' }, pageHead('节点', `${S.nodes.length} 个节点 · 点击行切换当前节点`, testUrlSelect(), search, subSel, sortSel, testAll), distCard, body),
+    el: h('div', { class: 'page' }, pageHead('节点', `${S.nodes.length} 个节点 · 点击行切换当前节点`, testUrlSelect(), search, subSel, sortSel, mkTestBtn(S.testing === true)), distCard, body),
     mount: () => refreshDist(S.nodes),
-    resize: drawDist,
-    /** latency-only state changes: patch cells in place instead of rebuilding the table (no flicker) */
     state(S2) {
       if (!tbody) return;
       maxLat = maxLatOf(S2.nodes);
@@ -278,7 +279,15 @@ PAGES.nodes = () => {
         for (const id of order) { const tr = tbody.querySelector(`tr[data-nid="${CSS.escape(id)}"]`); if (tr) tbody.appendChild(tr); }
       }
       refreshDist(S2.nodes);
+      // swap 测速/停止 button in place when the testing flag flips (avoid a full re-render mid-test)
+      const btn = document.querySelector('.page-head .actions .btn.danger, .page-head .actions .btn.primary');
+      if (btn && ((S2.testing === true) !== (btn.textContent === '停止测速'))) {
+        const fresh = mkTestBtn(S2.testing === true);
+        fresh.className = btn.className; // keep layout class consistent
+        btn.replaceWith(fresh);
+      }
     },
+    resize: drawDist,
   };
 };
 
@@ -517,27 +526,15 @@ PAGES.geo = () => {
   // ---- IP detection card (redesigned port of the Android IP 检测 feature; data via ip.sb)
   const exitIp = h('b', { class: 'ip' }, '检测中…');
   const exitTag = h('span', { class: 'tag accent', style: { visibility: 'hidden' } }, '');
-  const purityRing = h('span', { class: 'purity', title: 'IP 纯净度：基于 ip.sb 的 ISP/ASN 归属推断（机房/住宅/一般），非商业风控数据库评分' },
-    h('b', { class: 'purity-score' }, '-'), h('span', { class: 'purity-label' }, '纯净度'));
-  const purityBasis = h('div', { class: 'meta', style: { display: 'none' } }, '');
   const exitLoc = h('div', { class: 'loc' }, '');
   const exitMeta = h('div', { class: 'meta' }, '来源 ip.sb');
   const directIp = h('div', { class: 'v' }, '检测中…');
   const directLoc = h('div', { class: 'loc', style: { fontSize: '12px' } }, '');
   const checkedAt = new Date();
   const fillIpCard = (geo, err) => {
-    if (err) { exitIp.textContent = '检测失败'; exitTag.style.visibility = 'hidden'; purityRing.style.display = 'none'; exitLoc.textContent = err; exitMeta.textContent = '来源 ip.sb'; return; }
+    if (err) { exitIp.textContent = '检测失败'; exitTag.style.visibility = 'hidden'; exitLoc.textContent = err; exitMeta.textContent = '来源 ip.sb'; return; }
     exitIp.textContent = geo.ip || '-';
     exitTag.textContent = geo.country_code || ''; exitTag.style.visibility = geo.country_code ? 'visible' : 'hidden';
-    const pu = geo.purity;
-    if (pu) {
-      purityRing.style.display = '';
-      purityRing.querySelector('.purity-score').textContent = pu.score;
-      purityRing.classList.remove('good', 'mid', 'bad');
-      purityRing.classList.add(pu.score >= 85 ? 'good' : pu.score >= 60 ? 'mid' : 'bad');
-      purityRing.title = `IP 纯净度 ${pu.score}（${pu.level}）：${pu.basis}。${pu.note}`;
-      purityBasis.style.display = ''; purityBasis.textContent = `纯净度 ${pu.score} · ${pu.level} — ${pu.basis}`;
-    } else { purityRing.style.display = 'none'; purityBasis.style.display = 'none'; }
     exitLoc.textContent = [geo.city, geo.region, geo.country].filter(Boolean).join(' · ');
     exitMeta.textContent = `检测于 ${new Date().toLocaleTimeString()} · 来源 ip.sb · ${geo.isp || ''}${geo.asn ? ' (AS' + geo.asn + ')' : ''}`;
   };
@@ -545,26 +542,50 @@ PAGES.geo = () => {
     directIp.textContent = err ? '失败' : (geo.ip || '-');
     directLoc.textContent = err ? err : [geo.country, geo.city].filter(Boolean).join(' · ');
   };
-  const nodeInfo = (() => {
-    const main = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', minHeight: '58px' } }, h('span', { class: 'mut2' }, '查询中…'));
-    return { el: h('div', { class: 'card tile' }, h('div', { class: 'k' }, '当前节点服务器'), main), main };
-  })();
+  const nodePurity = h('span', { class: 'purity', style: { display: 'none' },
+    title: 'IP 纯净度：基于 ip.sb 的 ISP/ASN 归属推断（机房/住宅/一般），非商业风控数据库评分' },
+    h('b', { class: 'purity-score' }, '-'), h('span', { class: 'purity-label' }, '纯净度'));
+  const showPurity = (pu) => {
+    if (!pu) { nodePurity.style.display = 'none'; return; }
+    nodePurity.style.display = '';
+    nodePurity.querySelector('.purity-score').textContent = pu.score;
+    nodePurity.classList.remove('good', 'mid', 'bad');
+    nodePurity.classList.add(pu.score >= 85 ? 'good' : pu.score >= 60 ? 'mid' : 'bad');
+    nodePurity.title = `节点 IP 纯净度 ${pu.score}（${pu.level}）：${pu.basis}。${pu.note}`;
+  };
   const fillNode = (geo, extra) => {
     const el = nodeInfo.main; el.replaceChildren();
-    if (!geo) { el.append(h('span', { class: 'mut2' }, '无数据')); return; }
-    if (geo.error) { el.append(h('span', { class: 'err' }, '查询失败：' + geo.error)); return; }
+    if (!geo) { el.append(h('span', { class: 'mut2' }, '无数据')); showPurity(null); return; }
+    if (geo.error) { el.append(h('span', { class: 'err' }, '查询失败：' + geo.error)); showPurity(null); return; }
     el.append(h('b', { style: { fontSize: '14px' } }, geo.ip || '-'),
       h('span', { class: 'mut' }, [geo.country, geo.region, geo.city].filter(Boolean).join(' · ') || '-'),
       h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, [geo.isp, geo.asn ? 'AS' + geo.asn : null].filter(Boolean).join(' · ') || ''),
-      extra || null);
+      h('div', { class: 'toolbar', style: { marginTop: '4px' } }, nodePurity, extra || null));
   };
+  const purityBtn = h('button', { class: 'btn small', title: '对当前节点 IP 运行纯净度检测（ip.sb 归属推断）',
+    onclick: (e) => act(async () => {
+      const sel = X.S.nodes.find((n) => n.id === X.S.selectedId);
+      if (!sel) throw new Error('未选择节点');
+      const all = await api('geoNodes', { servers: [sel.server] });
+      const g = all[sel.server];
+      if (!g || g.error) throw new Error((g && g.error) || '节点定位失败');
+      if (!g.purity) throw new Error('未能取得纯净度评估');
+      showPurity(g.purity);
+      return g.purity;
+    }, (pu) => `节点纯净度：${pu.score}（${pu.level}）`, e.currentTarget) }, '纯净度检测');
+
+  const nodeInfo = (() => {
+    const main = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', minHeight: '58px' } }, h('span', { class: 'mut2' }, '查询中…'));
+    return { el: h('div', { class: 'card tile' }, h('div', { class: 'k' }, '当前节点服务器', h('span', { class: 'hint' }, '纯净度针对节点 IP')), main,
+      h('div', { style: { marginTop: '8px' } }, purityBtn)), main };
+  })();
   void checkedAt;
 
   // ---- dual view: flat 2D map + 3D globe
   const flatCanvas = h('canvas', { style: { width: '100%', height: '440px', display: 'block', borderRadius: '8px', touchAction: 'none' } });
   const globeBox = h('div', { class: 'globe-view', style: { display: 'none' } });
   const mapHolder = h('div', {}, flatCanvas);
-  let map = null; let globe = null;
+  let map = null; let globe = null; let spinOn = true; // 自转开关（3D 视图）
   const state = { exit: null, direct: null, node: null, targets: [], targetGeos: [] };
   const ok = (g) => g && !g.error && Number.isFinite(g.longitude) && Number.isFinite(g.latitude);
   const code = (g) => (ok(g) && /^[A-Za-z]{2}$/.test(g.country_code || '') ? g.country_code.toUpperCase() : null);
@@ -686,6 +707,11 @@ PAGES.geo = () => {
     h('span', { class: 'chip' }, h('i', { style: { background: 'var(--ink-3)', width: '9px', height: '9px', borderRadius: '50%' } }), '连接目标'),
     h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, '位置来自 ip.sb 查询（本地缓存 30 天），目标为机房位置仅供参考'),
     h('span', { class: 'sp' }),
+    h('button', { class: 'btn small', ref: 'spin', onclick: () => {
+      spinOn = !spinOn;
+      if (globe) { try { globe.setState({ autoRotate: spinOn, paused: false }); } catch { } }
+      const b = el.querySelector('[ref=spin]'); if (b) b.textContent = spinOn ? '停止自转' : '开启自转';
+    } }, '停止自转'),
     h('button', { class: 'btn small', onclick: () => map && map.zoomBy(1.4) }, '放大'),
     h('button', { class: 'btn small', onclick: () => map && map.zoomBy(1 / 1.4) }, '缩小'),
     h('button', { class: 'btn small ghost', onclick: () => map && map.resetView() }, '复位'));
@@ -697,9 +723,9 @@ PAGES.geo = () => {
     h('div', { class: 'card ipcard', style: { marginBottom: '14px' } },
       h('div', { class: 'ipmain' },
         h('div', { class: 'k', style: { fontSize: '12px', color: 'var(--ink-3)' } }, running ? 'IP 检测 · 经当前节点出口' : 'IP 检测 · 本机公网（直连）'),
-        h('div', { class: 'iprow' }, exitIp, exitTag, purityRing,
+        h('div', { class: 'iprow' }, exitIp, exitTag,
           h('button', { class: 'btn small ghost', title: '复制 IP', onclick: () => navigator.clipboard.writeText(exitIp.textContent).then(() => toast('已复制')) }, '复制')),
-        exitLoc, exitMeta, purityBasis),
+        exitLoc, exitMeta),
       h('div', { class: 'ipside' },
         h('div', { class: 'k', style: { fontSize: '12px', color: 'var(--ink-3)' } }, '直连公网'),
         directIp, directLoc)),

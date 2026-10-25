@@ -198,3 +198,28 @@ test('state() exposes the route preview after build()', () => {
   svc.build();
   assert.ok(svc.state().routePreview.length >= 3);
 });
+
+test('testNodes can be stopped mid-run; queued nodes are skipped', async () => {
+  const core = fakeCore();
+  const svc = mkSvc({ core });
+  const links = ['a', 'b', 'c'].map((t, i) => 'ss://' + Buffer.from('aes-128-gcm:pw' + i).toString('base64') + '@127.0.0.1:' + (10 + i) + '#' + t).join('\n');
+  svc.importLinks({ text: links });
+  core.delay = async (tag, url) => { core.delayCalls.push([tag, url]); svc._testStop = true; return 7; }; // user presses stop during the first check
+  const r = await svc.testNodes();
+  assert.equal(r.stopped, true);
+  assert.equal(r.done, 1, 'in-flight node finished, queued ones skipped');
+  assert.equal(core.delayCalls.length, 1);
+  assert.equal(svc._testing, false, 'testing flag cleared');
+  assert.equal(svc.d.nodes.filter((n) => n.latency === 7).length, 1);
+  assert.equal(svc.stopTestNodes().stopping, false, 'stop is a no-op when idle');
+});
+
+test('state() exposes the testing flag', async () => {
+  const core = fakeCore();
+  const svc = mkSvc({ core });
+  svc.importLinks({ text: LINK });
+  assert.equal(svc.state().testing, false);
+  svc._testing = true;
+  assert.equal(svc.state().testing, true);
+  svc._testing = false;
+});

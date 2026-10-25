@@ -88,6 +88,9 @@ body.glass .tbl th { background: color-mix(in srgb, var(--card-2) var(--glass-pc
 [data-theme=dark] body.glass .card, [data-theme=dark] body.glass .side, [data-theme=dark] body.glass .logs { background: color-mix(in srgb, var(--card) var(--glass-pct), transparent); }
 [data-theme=dark] body.glass .tbl th { background: color-mix(in srgb, var(--card-2) var(--glass-pct), transparent); }
 body.glass .card, body.glass .side { border-color: color-mix(in srgb, var(--line) 70%, transparent); }
+/* keep the sidebar on its own compositing layer: re-blurring the backdrop on every
+   page switch made the glass shimmer while navigating */
+body.glass .side { will-change: backdrop-filter; transform: translateZ(0); }
 body.glass .modal { background: color-mix(in srgb, var(--card) 92%, transparent); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px); }
 
 input[type=range] { accent-color: var(--accent); width: 100%; }
@@ -95,6 +98,7 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 /* ---------------- 3D globe view (ported WebGL globe) ---------------- */
 .globe-view { position: relative; height: 440px; border-radius: 8px; overflow: hidden; background: var(--card-2); }
 .globe-view canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.globe-view #labels { pointer-events: none; } /* overlay must not swallow globe drags (this line was lost in the port and blocked all manual rotation) */
 .globe-view #credit { position: absolute; left: 6px; bottom: 4px; color: #69778b; font: 8px sans-serif; pointer-events: none; text-shadow: 0 1px 2px #000; }
 .globe-view #error { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; color: var(--ink-2); font-size: 12px; text-align: center; padding: 12px; }
 
@@ -150,7 +154,7 @@ tr.pick { transition: background .1s ease; }
   display: flex; align-items: center; gap: 11px; height: 37px; padding: 0 11px; border: 0; border-radius: var(--r-sm);
   background: transparent; color: var(--ink-2); font: inherit; font-size: 13.5px; cursor: pointer; text-align: left; width: 100%;
 }
-.nav button:hover { background: var(--card-2); color: var(--ink); }
+.nav button:hover { color: var(--ink); } /* hover tint removed by request (dark mode read it as a glitch) */
 .nav button.on { background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
 .nav button.on svg { color: var(--accent); }
 .nav svg { width: 18px; height: 18px; flex: none; }

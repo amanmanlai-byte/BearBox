@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { AppService } = require('./backend/service');
 const { isWindowsAdmin } = require('./backend/core');
+const { assessPurity } = require('./backend/geo');
 
 if (process.env.JIAJIA_NOSANDBOX) app.commandLine.appendSwitch('no-sandbox');
 if (process.env.JIAJIA_USERDATA) app.setPath('userData', process.env.JIAJIA_USERDATA);
@@ -131,6 +132,7 @@ const handlers = {
   removeSub: (a) => svc.removeSubscription(a.id),
   selectNode: (a) => svc.selectNode(a.id),
   testNodes: (a) => svc.testNodes(a && a.ids),
+  stopTestNodes: () => svc.stopTestNodes(),
   removeNode: (a) => svc.removeNode(a.id),
   start: () => startCore(),
   stop: () => svc.stop(),
@@ -183,7 +185,11 @@ const handlers = {
     const wanted = (a && a.servers && a.servers.length) ? a.servers : [...new Set(svc.d.nodes.map((n) => n.outbound.server))];
     const servers = [...new Set(wanted)].slice(0, 12);
     const out = {};
-    await Promise.all(servers.map(async (server) => { out[server] = await svc.geo.locate(server).catch((e) => ({ error: e.message })); }));
+    await Promise.all(servers.map(async (server) => {
+      const g = await svc.geo.locate(server).catch((e) => ({ error: e.message }));
+      if (!g.error && g.latitude != null) g.purity = assessPurity(g); // node-IP purity (user request: not the local IP)
+      out[server] = g;
+    }));
     return out;
   },
   worldGeo: () => {

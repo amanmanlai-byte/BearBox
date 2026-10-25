@@ -37,7 +37,7 @@ function stateSig(S) {
     S.subscriptions.map((s) => [s.id, s.count, s.updatedAt, s.error, s.info && s.info.total, s.info && s.info.expire]),
     S.rules.map((r) => [r.id, r.enabled]),
     S.nodes.length, S.nodes.map((n) => n.subId).join(','),
-    S.routePreview.length, S.sysproxySupported,
+    S.routePreview.length, S.sysproxySupported, S.testing === true,
   ]);
 }
 // sig fields that a toolbox export/import changes; the page itself re-renders via normal actions

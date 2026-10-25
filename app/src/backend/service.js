@@ -20,6 +20,7 @@ class AppService extends EventEmitter {
     this.core = core || new Core({ binary: binary || resolveCoreBinary(appRoot, resourcesPath), workDir: path.join(userData, 'core-run') });
     this.rulesetDir = resolveRulesetDir(appRoot, resourcesPath);
     this.geo = new GeoService({ userData, getProxy: () => (this.core.state === 'running' ? { host: '127.0.0.1', port: Number(this.d.settings.mixedPort) } : null) });
+    this._testing = false; this._testStop = false; this._testDone = 0;
     this.sysproxy = sysproxy || new SystemProxy();
     this.fetchSub = fetchSub;
     this.proxyApplied = false; this.starting = false; this.lastError = null; this.coreVersion = null;
@@ -67,6 +68,7 @@ class AppService extends EventEmitter {
       nodes: d.nodes.map((n) => ({ id: n.id, subId: n.subId, tag: n.outbound.tag, type: n.outbound.type, server: n.outbound.server, port: n.outbound.server_port, latency: n.latency ?? null, latencyKind: n.latencyKind || null, testedAt: n.testedAt || null })),
       selectedId: d.selectedId, today, daily: d.daily,
       routePreview: this.routePreview,
+      testing: this._testing === true,
       session: { upTotal: this.core.upTotal, downTotal: this.core.downTotal, memory: this.core.memory },
       samples: this.core.samples.slice(-120),
     };
@@ -185,20 +187,31 @@ class AppService extends EventEmitter {
     const mode = running ? 'url' : 'tcp';
     const workers = Math.max(1, Math.min(32, Number(this.d.settings.testConcurrency) || 5));
     let i = 0;
+    this._testStop = false; this._testing = true; this._testDone = 0; this.emitState();
     const worker = async () => {
-      while (i < list.length) {
+      while (i < list.length && !this._testStop) {
         const n = list[i++];
         try {
           if (running) n.latency = await this.core.delay(n.outbound.tag, url, 6000);
           else n.latency = await tcpPing(n.outbound.server, n.outbound.server_port, 3000);
         } catch { n.latency = null; }
-        n.latencyKind = mode; n.testedAt = Date.now(); this.emitState();
+        n.latencyKind = mode; n.testedAt = Date.now(); this._testDone++; this.emitState();
       }
     };
-    await Promise.all(Array.from({ length: Math.min(workers, list.length) }, worker));
-    if (tempStarted) await this.stop();
-    this.store.save();
-    return { mode, count: list.length, error: fallbackError };
+    try {
+      await Promise.all(Array.from({ length: Math.min(workers, list.length) }, worker));
+    } finally {
+      this._testing = false; this.emitState();
+      if (tempStarted) await this.stop();
+      this.store.save();
+    }
+    return { mode, count: list.length, done: this._testDone, stopped: this._testStop === true, error: fallbackError };
+  }
+
+  /** User-requested cancellation of a running URL test. In-flight checks (<=6s) finish, queued ones are dropped. */
+  stopTestNodes() {
+    if (this._testing) this._testStop = true;
+    return { stopping: this._testing === true };
   }
 
   // ---------- start / stop ----------
