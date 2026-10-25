@@ -676,7 +676,7 @@ PAGES.geo = () => {
 
   const draw = () => { flatDraw(); globeFeed(); };
 
-  let alive = true; let targetTimer = null; let drawTimer = null; let selfTimer = null;
+  let alive = true; let targetTimer = null; let drawTimer = null; let selfTimer = null; let nodeTimer = null;
   const refreshSelf = async () => {
     try { const g = await api('geoSelf', {}); if (!alive) return; state.exit = g; fillIpCard(g); } catch (e) { if (alive) { state.exit = { error: e.message }; fillIpCard(null, e.message); } }
     try { const g = await api('geoSelf', { direct: true }); if (!alive) return; state.direct = g; fillDirect(g); } catch (e) { if (alive) fillDirect(null, e.message); }
@@ -743,6 +743,9 @@ PAGES.geo = () => {
     refreshSelf(); refreshNode(); refreshTargets();
     targetTimer = setInterval(refreshTargets, 5000);
     selfTimer = setInterval(refreshSelf, 5 * 60 * 1000);
+    // re-query the node location when the user switches to a different node
+    let lastSelId = X.S.selectedId;
+    nodeTimer = setInterval(() => { if (X.S && X.S.selectedId !== lastSelId) { lastSelId = X.S.selectedId; refreshNode(); } }, 2000);
   })();
   drawTimer = setInterval(draw, 1500); // pulse markers on the flat view
 
@@ -780,7 +783,7 @@ PAGES.geo = () => {
   return {
     el,
     resize: () => draw(),
-    destroy: () => { alive = false; clearInterval(targetTimer); clearInterval(drawTimer); clearInterval(selfTimer); if (globe) { try { globe.destroy(); } catch { } globe = null; } },
+    destroy: () => { alive = false; clearInterval(targetTimer); clearInterval(drawTimer); clearInterval(selfTimer); clearInterval(nodeTimer); if (globe) { try { globe.destroy(); } catch { } globe = null; } },
   };
 };
 

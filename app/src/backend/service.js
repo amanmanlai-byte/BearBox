@@ -39,8 +39,14 @@ class AppService extends EventEmitter {
     this.coreVersion = await this.core.version();
     // migrate the pre-0.2.2 default test URL to the new one; only the untouched default is replaced
     if (this.d.settings.connectionTestURL === LEGACY_TEST_URL) { this.d.settings.connectionTestURL = DEFAULT_SETTINGS.connectionTestURL; this.store.save(); }
-    // crash recovery: a previous run may have left the system proxy pointing at a dead port
-    if (this.d.sysproxyBackup && this.core.state === 'stopped') { try { await this.sysproxy.disable(this.d.sysproxyBackup.backup); } catch { /* best effort */ } this.d.sysproxyBackup = null; this.store.save(); }
+    // crash recovery: a previous run may have left the system proxy pointing at a dead port.
+    // This MUST succeed before anything else - if it fails, the user's internet is broken.
+    if (this.d.sysproxyBackup) {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try { await this.sysproxy.disable(this.d.sysproxyBackup.backup); break; } catch (e) { if (attempt === 2) this.core.pushLog('ERROR 启动时还原系统代理失败（已重试 3 次）: ' + e.message); }
+      }
+      this.d.sysproxyBackup = null; this.proxyApplied = false; this.store.save();
+    }
     this.scheduleAutoUpdate();
   }
 
@@ -253,8 +259,15 @@ class AppService extends EventEmitter {
   }
   async cleanupProxy() {
     if (!this.proxyApplied && !this.d.sysproxyBackup) return;
-    try { await this.sysproxy.disable(this.d.sysproxyBackup && this.d.sysproxyBackup.backup); } catch (e) { this.core.pushLog('ERROR 还原系统代理失败: ' + e.message); }
-    this.proxyApplied = false; this.d.sysproxyBackup = null; this.store.flush();
+    try {
+      await this.sysproxy.disable(this.d.sysproxyBackup && this.d.sysproxyBackup.backup);
+      // only clear the backup on success - if disable() throws and we cleared it,
+      // the next startup would have no backup to restore from (internet stays broken)
+      this.proxyApplied = false; this.d.sysproxyBackup = null; this.store.flush();
+    } catch (e) {
+      this.core.pushLog('ERROR 还原系统代理失败: ' + e.message);
+      // keep proxyApplied and sysproxyBackup so the next startup retries the restore
+    }
   }
 
   async toggleSystemProxy(on) {
