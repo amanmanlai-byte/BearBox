@@ -198,8 +198,8 @@ class AppService extends EventEmitter {
       while (i < list.length && !this._testStop) {
         const n = list[i++];
         try {
-          if (running) n.latency = await this.core.delay(n.outbound.tag, url, 6000);
-          else n.latency = await tcpPing(n.outbound.server, n.outbound.server_port, 3000);
+          if (running) n.latency = await this.core.delay(n.outbound.tag, url, 10000);
+          else n.latency = await tcpPing(n.outbound.server, n.outbound.server_port, 5000);
         } catch { n.latency = null; }
         n.latencyKind = mode; n.testedAt = Date.now(); this._testDone++; this.emitState();
       }

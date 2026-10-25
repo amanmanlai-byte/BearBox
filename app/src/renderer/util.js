@@ -125,8 +125,8 @@ function nodeFlag(name) {
   if (!name) return '';
   if (/\u{1F1E6}-\u{1F1FF}/u.test(name)) return '';
   for (const pair of FLAG_CN) { if (name.includes(pair[0])) return pair[1]; }
-  const m = /^[A-Z]{2}(?=[\d\s\-_\u00b7]|$)/.exec(name.trim());
-  if (m) { for (const pair of FLAG_CODE) { if (pair[0] === m[0]) return pair[1]; } }
+  const m = /^[A-Za-z]{2}(?=[\d\s\-_\u00b7]|$)/.exec(name.trim());
+  if (m) { const up = m[0].toUpperCase(); for (const pair of FLAG_CODE) { if (pair[0] === up) return pair[1]; } }
   return '';
 }
 // Node display name: flag prefix + original tag (the original is never modified).

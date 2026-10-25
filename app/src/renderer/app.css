@@ -125,8 +125,6 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 .purity.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
 
 /* ---------------- motion (medium, restrained) ---------------- */
-.page-nav { animation: pageIn .16s ease-out; }
-@keyframes pageIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 .card { transition: box-shadow .13s ease, border-color .13s ease; }
 .card:hover { box-shadow: 0 3px 14px rgba(20, 24, 31, 0.08); }
 button.btn { transition: background .12s, border-color .12s, box-shadow .12s, transform .08s; }
