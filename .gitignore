@@ -1,0 +1,9 @@
+dist/
+node_modules/
+app/node_modules/
+app/core/sing-box-windows-amd64.exe
+app/core/sing-box-linux-*
+app/core/wintun.dll
+app/geo-cache.json
+*.bad
+*.tmp
