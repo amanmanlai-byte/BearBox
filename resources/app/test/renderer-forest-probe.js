@@ -1,0 +1,52 @@
+(async () => {
+  const results=[],errors=[];
+  window.addEventListener('error',e=>errors.push(e.message));
+  window.addEventListener('unhandledrejection',e=>errors.push(String(e.reason)));
+  const check=(v,m)=>{if(!v)throw Error(m);results.push(m);};
+  const pause=(ms=200)=>new Promise(r=>setTimeout(r,ms));
+  const until=async fn=>{for(let i=0;i<80;i++){if(fn())return;await pause(100);}throw Error('UI update timeout');};
+  check(X.S.settings.tun === false, 'new configuration defaults to TUN off');
+  const drag=document.querySelector('.window-drag'),controls=document.querySelector('.window-controls'),box=controls.getBoundingClientRect();
+  check(box.right>innerWidth-25 && box.top<10, 'window controls are at top right');
+  check([...controls.querySelectorAll('button')].map(b=>b.dataset.windowAction).join(',')==='minimize,maximize,close', 'window actions are present');
+  check(getComputedStyle(drag).getPropertyValue('-webkit-app-region')==='drag', 'top strip is a native draggable region');
+  check(getComputedStyle(controls).getPropertyValue('-webkit-app-region')==='no-drag', 'window buttons remain interactive');
+  check(document.elementFromPoint(Math.round(innerWidth/2),10)===drag, 'top center hits draggable region');
+  let actions=[];const real=api;api=async(n,a)=>n==='winAction'?(actions.push(a.type),{}):real(n,a);
+  controls.querySelectorAll('button').forEach(b=>b.click());await pause();
+  check(actions.join(',')==='minimize,maximize,close', 'window buttons dispatch actions');api=real;
+  window.__go('rules');
+  check(![...document.querySelectorAll('#main button')].some(b=>/TUN/i.test(b.textContent)), 'rules page does not expose a TUN switch');
+  window.__go('appearance');
+  check(!document.querySelector('[aria-label="界面毛玻璃模糊"]'), 'separate glass blur setting removed');
+  const canvas=document.createElement('canvas');canvas.width=240;canvas.height=240;const g=canvas.getContext('2d');
+  for(let x=0;x<240;x+=20){g.fillStyle=(x/20)%2?'#102030':'#e7d259';g.fillRect(x,0,20,240);}
+  const wallpaper=canvas.toDataURL('image/png');
+  await api('setSettings',{theme:'light',appearanceMode:'light',wallpaper,wallpaperOpacity:1,wallpaperBlur:0,glassEnabled:true,glassOpacity:.25});await pause(500);
+  check(document.body.classList.contains('glass') && document.body.classList.contains('wallpaper'), 'glass and wallpaper are active');
+  const card=document.querySelector('.appearance-page .card');const style1=getComputedStyle(card);
+  const bg1=style1.backgroundColor,filter1=style1.backdropFilter;
+  check(filter1.includes('blur(14px)'), 'glass uses fixed real backdrop blur');
+  await api('setSettings',{glassOpacity:.7});await pause(350);
+  const bg2=getComputedStyle(card).backgroundColor;
+  check(bg1!==bg2, 'glass transparency responds without an 80 percent clamp');
+  await api('setSettings',{glassEnabled:false});await pause(350);
+  check(getComputedStyle(card).backdropFilter==='none', 'glass can be turned off');
+  await api('setSettings',{glassEnabled:true,glassOpacity:.25});await pause(350);
+  check(getComputedStyle(card).backdropFilter.includes('blur(14px)'), 'glass turns back on');
+  await api('setSettings',{fontColor:'#334455',uiColor:'#227799',accentColor:'#7654b7'});await pause(350);
+  check(document.documentElement.hasAttribute('data-custom-ui'), 'simple theme applies custom UI color');
+  await api('setSettings',{theme:'forest'});await pause(500);
+  check(!document.documentElement.hasAttribute('data-custom-ui') && !document.documentElement.style.getPropertyValue('--accent') && !document.documentElement.style.getPropertyValue('--ink'), 'forest uses its own colors');
+  check([...document.querySelectorAll('.appearance-color-control')].length===3 && [...document.querySelectorAll('.appearance-color-control')].every(e=>e.inert), 'forest locks all three color controls');
+  check(getComputedStyle(document.querySelector('.forest-side-art')).display!=='none', 'forest character art is visible');
+  let rejected=false;try{await api('setSettings',{accentColor:'#000000'});}catch{rejected=true;}
+  check(rejected && X.S.settings.accentColor==='#7654b7', 'forest rejects color changes without losing saved color');
+  await api('setSettings',{theme:'light'});await pause(450);
+  check(document.documentElement.hasAttribute('data-custom-ui') && document.documentElement.style.getPropertyValue('--accent'), 'returning to simple restores saved colors');
+  check([...document.querySelectorAll('.appearance-color-control')].every(e=>!e.inert), 'simple theme unlocks color controls');
+  await api('setSettings',{theme:'forest-dark',appearanceMode:'dark'});await pause(350);
+  check(document.documentElement.dataset.theme==='forest-dark' && document.querySelector('.appearance-color-control').inert, 'dark forest keeps exclusive styling');
+  check(errors.length===0,'no renderer errors');
+  window.__go('home'); return {passed:results.length,results};
+})()

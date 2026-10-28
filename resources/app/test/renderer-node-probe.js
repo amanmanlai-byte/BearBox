@@ -1,0 +1,56 @@
+(async () => {
+  const results = [], errors = [];
+  window.addEventListener('error', (e) => errors.push(e.message));
+  window.addEventListener('unhandledrejection', (e) => errors.push(String(e.reason)));
+  const check = (condition, message) => { if (!condition) throw new Error(message); results.push(message); };
+  const pause = (ms = 250) => new Promise((r) => setTimeout(r, ms));
+  const until = async (fn) => { for (let i = 0; i < 80; i++) { if (fn()) return; await pause(50); } throw new Error('UI update timeout'); };
+  await api('importLinks', { name: 'UI regression', text: 'socks://127.0.0.1:23999#Local-A\nsocks://127.0.0.1:23998#Local-B' });
+  window.__applyState(await api('state')); await pause();
+  X.nodeSubFilter = 'deleted-subscription'; window.__go('nodes');
+  check(document.querySelectorAll('[data-nid]').length === X.S.nodes.length, 'stale subscription filter recovers all nodes');
+  check(document.querySelector('[data-keep=nodeSubFilter]').value === 'all', 'subscription selector agrees with recovered list');
+  X.nodeFilter = 'no-match-value'; window.__render();
+  check(document.querySelectorAll('[data-nid]').length === 0, 'unmatched filter is reproduced');
+  check(document.querySelector('.node-empty-filter')?.textContent.includes('节点已导入'), 'filtered empty state explains imported nodes still exist');
+  document.querySelector('.node-empty-filter button').click();
+  check(document.querySelectorAll('[data-nid]').length === X.S.nodes.length, 'show all restores node rows');
+  check(document.querySelector('[data-keep=nodeFilter]').value === '', 'clear filter clears search input');
+  const composingInput = document.querySelector('[data-keep=nodeFilter]');
+  composingInput.focus(); composingInput.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true, data: '' }));
+  composingInput.value = '中'; composingInput.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing: true, data: '中' }));
+  window.__render();
+  check(document.querySelector('[data-keep=nodeFilter]') === composingInput, 'composition preserves the live input element across state refresh');
+  composingInput.value = '中文'; composingInput.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '中文' }));
+  check(X.nodeFilter === '中文' && document.querySelector('[data-keep=nodeFilter]').value === '中文', 'Chinese composition commits a complete query');
+  document.querySelector('.node-empty-filter button').click();
+  const target = X.S.nodes.at(-1).id;
+  document.querySelector(`[data-nid="${CSS.escape(target)}"]`).click();
+  await until(() => X.S.selectedId === target && document.querySelector(`[data-nid="${CSS.escape(target)}"]`).classList.contains('sel'));
+  check((await api('state')).selectedId === target, 'clicking a node persists backend selection');
+  const top = document.querySelector('[data-nid]').getBoundingClientRect().top;
+  check(top < innerHeight - 80, 'node list appears inside initial viewport');
+  check(document.querySelector('.node-distribution').open, 'node status distribution is expanded by default');
+  const control = document.querySelector('.node-distribution'); control.open = true; await pause(); control.open = false;
+  check(document.querySelectorAll('[data-nid]').length === X.S.nodes.length, 'expanding statistics preserves node rows');
+  window.__go('home'); window.__go('nodes');
+  check(document.querySelector('.page').classList.contains('viewfade'), 'navigation has gentle transition');
+  window.__render();
+  check(!document.querySelector('.page').classList.contains('viewfade'), 'state redraw does not replay navigation animation');
+  check(parseFloat(getComputedStyle(document.querySelector('button.btn')).transitionDuration) > 0, 'buttons have short CSS feedback');
+  X.nodeFilter = 'no-match'; X.nodeSubFilter = 'deleted-subscription';
+  window.__go('subs');
+  const input = document.querySelector('textarea[aria-label="分享链接"]'); input.value = 'socks://127.0.0.1:23997#Local-C';
+  [...document.querySelectorAll('button')].find((b) => b.textContent === '导入分享链接').click();
+  await until(() => document.querySelector('.nodes-page') && X.S.nodes.length === 3);
+  check(document.querySelectorAll('[data-nid]').length === 3, 'actual import button opens all newly imported nodes');
+  check(document.querySelector('[data-keep=nodeSubFilter]').value === 'all', 'import clears stale subscription filter');
+  for (const theme of ['light', 'dark', 'forest', 'forest-dark']) {
+    await api('setSettings', { theme }); await pause(350); window.__go('nodes');
+    check(document.querySelectorAll('[data-nid]').length === 3, theme + ': rows render');
+    check(document.querySelector('[data-nid]').getBoundingClientRect().top < innerHeight - 80, theme + ': list visible');
+  }
+  await api('setSettings', { theme: 'light' }); await pause(400); window.__go('nodes');
+  check(errors.length === 0, 'no renderer errors or unhandled rejections');
+  return { passed: results.length, results };
+})()

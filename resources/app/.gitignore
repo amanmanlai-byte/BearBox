@@ -1,0 +1,7 @@
+node_modules/
+core/*.exe
+core/*.dll
+core-run/
+trial-data/
+*.log
+.DS_Store

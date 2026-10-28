@@ -1,0 +1,16 @@
+Bear Box 0.3.0-preview.2 local revision, 2026-10-28
+Desktop source in this portable distribution: resources/app/src/
+Desktop MIT license: LICENSE; third-party status: THIRD_PARTY_NOTICES.md
+Reported upstream repositories:
+https://github.com/amanmanlai-byte/BearBox
+https://github.com/weilai090624-code/JiajiaBox
+https://github.com/SagerNet/sing-box
+
+Bundled kernel: sing-box 1.14.3-Jiajia-7
+Reported revision: 4067f53d0881437092454817ebfd2c448f8b1d97
+SHA256: 125dee025b187660f431f766d854efb88c927fa300e398a3e2e480eaa564c5dc
+Complete corresponding source for this exact custom binary has NOT been verified.
+The separate desktop source ZIP does not contain the complete native kernel source.
+Upstream links alone are not a verified corresponding-source delivery or offer.
+Before public binary redistribution, resolve the GPL source requirements,
+static dependency notices, ruleset provenance and artwork permissions.

@@ -1,9 +1,0 @@
-export GOROOT=/opt/gotc/go
-export PATH=/opt/gotc/go/bin:$PATH
-export GOTOOLCHAIN=local
-export GOPROXY=direct
-export GOSUMDB=off
-export GOFLAGS=-mod=mod
-export GOPATH=/home/claude/gopath
-export GOCACHE=/home/claude/gocache
-export GIT_TERMINAL_PROMPT=0

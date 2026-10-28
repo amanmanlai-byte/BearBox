@@ -1,0 +1,11 @@
+Bear Box desktop client
+Copyright (c) 2026 weilai090624-code
+Copyright (c) 2026 Bear Box contributors
+
+The desktop code includes MIT-licensed JiajiaBox-derived work.
+The custom sing-box kernel, Electron/Chromium, js-yaml, argparse, Wintun,
+textures and other assets have separate licenses or unresolved provenance.
+Earth textures: Solar System Scope / INOVE, CC BY 4.0; resized/converted.
+Full texts and the status of unresolved source/artwork/ruleset notices:
+THIRD_PARTY_NOTICES.md and licenses/.
+No statement here licenses third-party character artwork or trademarks.

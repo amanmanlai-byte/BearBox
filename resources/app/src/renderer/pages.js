@@ -1,0 +1,1310 @@
+'use strict';
+// The eight pages. Each PAGES.x() returns { el, tick?, log?, resize?, destroy? }.
+// Live data flows in through tick/log; state changes trigger a full re-render from app.js.
+const PAGES = {};
+
+function trafficLegend() { return h('span', { class: 'traffic-legend' }, h('span', {}, h('i', { class: 'legend-down' }), '下载'), h('span', {}, h('i', { class: 'legend-up' }), '上传')); }
+
+function geoPublicIp(value) {
+  const ip = String(value || '').trim().toLowerCase();
+  if (ip.startsWith('::ffff:')) return geoPublicIp(ip.slice(7));
+  if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(ip)) {
+    const [a, b, c, d] = ip.split('.').map(Number);
+    if ([a, b, c, d].some((n) => n > 255) || a === 0 || a === 10 || a === 127 || a >= 224 ||
+      (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) ||
+      (a === 198 && (b === 18 || b === 19)) ||
+      (a === 192 && b === 0 && c === 2) || (a === 198 && b === 51 && c === 100) || (a === 203 && b === 0 && c === 113)) return '';
+    return ip;
+  }
+  if (/^[0-9a-f:]+$/.test(ip) && ip.includes(':')) {
+    try {
+      const normalized = new URL(`http://[${ip}]/`).hostname.slice(1, -1);
+      if (normalized === '::' || normalized === '::1' || /^(?:fc|fd|fe[89ab]|ff|2001:db8:|2001:2:)/.test(normalized)) return '';
+      return normalized;
+    } catch { return ''; }
+  }
+  return '';
+}
+
+function lastDays(daily, n) {
+  const out = []; const now = new Date();
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i);
+    const k = dayKeyOf(d);
+    const v = (daily && daily[k]) || { up: 0, down: 0 };
+    out.push({ key: k, label: `${d.getMonth() + 1}/${d.getDate()}`, up: v.up || 0, down: v.down || 0 });
+  }
+  return out;
+}
+
+function segMode() {
+  const S = X.S;
+  return h('div', { class: 'seg', role: 'group', 'aria-label': '路由模式' },
+    ['rule', 'global'].map((m) => h('button', { class: S.settings.mode === m ? 'on' : '', onclick: () => S.settings.mode !== m && act(() => api('setSettings', { mode: m }), `已切换为${modeName(m)}模式`) }, modeName(m))));
+}
+function sysProxySwitch() {
+  const S = X.S;
+  if (S.settings.tun) return h('span', { class: 'note' }, 'TUN 接管 · 系统代理无需开启');
+  if (!S.sysproxySupported) return h('span', { class: 'note', title: '当前系统不是 Windows' }, '系统代理：仅 Windows 支持');
+  const cb = h('input', { type: 'checkbox', checked: S.proxyApplied, disabled: !isRunning(), onchange: (e) => act(async () => { try { return await api('toggleSysProxy', { on: e.target.checked }); } catch (err) { cb.checked = !!X.S.proxyApplied; throw err; } }, e.target.checked ? '系统代理已开启' : '系统代理已还原') });
+  return h('label', { class: 'switch' }, cb, '系统代理');
+}
+
+// ================================================================ home
+PAGES.home = () => {
+  const S = X.S;
+  const running = isRunning();
+  const busy = S.core.state === 'starting' || S.core.state === 'stopping';
+  const stLabel = { stopped: '未连接', starting: '正在启动…', running: '已连接，代理运行中', stopping: '正在停止…' }[S.core.state];
+  const sel = S.nodes.find((n) => n.id === S.selectedId);
+
+  const power = h('button', { class: 'power' + (running ? ' on' : '') + (busy ? ' busy' : ''), 'aria-label': running ? '停止内核' : '启动内核',
+    disabled: busy || (!running && S.nodes.length === 0),
+    onclick: () => act(() => api(running ? 'stop' : 'start'), running ? '内核已停止' : '内核已启动') }, svgIcon(ICONS.power));
+
+  const nodeSel = h('select', { 'aria-label': '当前节点', disabled: S.nodes.length === 0, onchange: (e) => act(async () => { try { return await api('selectNode', { id: e.target.value }); } catch (err) { nodeSel.value = X.S.selectedId || ''; throw err; } }, '已切换节点') },
+    S.nodes.map((n) => h('option', { value: n.id }, nodeDisplayName(n.tag))));
+  nodeSel.value = S.selectedId || '';
+
+  let subLine;
+  if (S.core.error) subLine = h('div', { class: 'err' }, S.core.error);
+  else if (S.nodes.length === 0) subLine = h('div', {}, h('span', { class: 'mut2' }, '还没有节点，'), h('a', { href: '#', onclick: (e) => { e.preventDefault(); goto('subs'); } }, '去添加订阅或导入分享链接'), h('span', { class: 'mut2' }, '。'));
+  else if (running) subLine = `${'本地代理 127.0.0.1:' + S.settings.mixedPort + ' · ' + modeName(S.settings.mode) + '模式 · 系统代理' + (S.proxyApplied ? '已开启' : '未开启') + (S.settings.tun ? ' · TUN' : '')}`;
+  else subLine = `${S.nodes.length} 个节点就绪，当前选择：${sel ? sel.tag : '-'}`;
+
+  const hero = h('div', { class: 'card hero' },
+    power,
+    h('div', {}, h('div', { class: 'st-big' }, h('span', { class: 'dot ' + (running ? 'run' : busy ? 'wait' : '') }), stLabel), h('div', { class: 'sub' }, subLine)),
+    h('div', { class: 'right' }, nodeSel, sysProxySwitch(), segMode()));
+
+  // live speed chart
+  const downV = h('div', { class: 'v down-c' }, '-'); const upV = h('div', { class: 'v up-c' }, '-');
+  const peakV = h('div', { class: 'peak' }, '');
+  const chartCanvas = h('canvas', { class: 'chart', 'aria-label': '实时上传下载速度曲线' });
+  const chart = new SpeedChart(chartCanvas);
+  const chartCard = h('div', { class: 'card chart-card' },
+    h('div', { class: 'live-strip' },
+      h('div', { class: 'item' }, h('div', { class: 'k' }, h('i', { style: { background: 'var(--down)' } }), '下载'), downV),
+      h('div', { class: 'item' }, h('div', { class: 'k' }, h('i', { style: { background: 'var(--up)' } }), '上传'), upV),
+      peakV),
+    chartCanvas,
+    h('div', { class: 'note', style: { marginTop: '8px' } }, '数据来自内核 Clash API 每秒轮询的真实字节计数器'));
+
+  // stat tiles
+  const mkTile = (label, main, extra, spark, sparkColor) => {
+    const c = spark ? h('canvas', { class: 'spark' }) : null;
+    return { el: h('div', { class: 'card tile' }, h('div', { class: 'k' }, label), main, extra, c), canvas: c, color: sparkColor };
+  };
+  const connTile = mkTile('活动连接', h('div', { class: 'v' }, running ? '0' : '-'), null, true, '--down');
+  const sessTile = mkTile('本次运行流量', h('div', { class: 'duo' }, h('div', {}, h('div', { class: 'v down-c', ref: 'sd' }, running ? '↓ ' + fmtBytes(S.session.downTotal) : '-')), h('div', {}, h('div', { class: 'v up-c', ref: 'su' }, running ? '↑ ' + fmtBytes(S.session.upTotal) : '-'))), null);
+  const tdV = h('div', { class: 'v down-c' }, '↓ ' + fmtBytes(S.today.down));
+  const tuV = h('div', { class: 'v up-c' }, '↑ ' + fmtBytes(S.today.up));
+  const todayTile = mkTile('今日流量', h('div', { class: 'duo' }, h('div', {}, tdV), h('div', {}, tuV)), null);
+  const memTile = mkTile('内核内存占用', h('div', { class: 'v' }, running ? fmtBytes(S.session.memory) : '-'), null, true, '--up');
+  const tiles = h('div', { class: 'grid cols-4', style: { margin: '14px 0' } }, connTile.el, sessTile.el, todayTile.el, memTile.el);
+
+  // 7-day bars + latency rank
+  const days7 = lastDays(S.daily, 7);
+  const dCanvas = h('canvas', { style: { height: '180px', width: '100%', display: 'block' }, 'aria-label': '近7天流量' });
+  const dailyChart = new DailyBars(dCanvas);
+  const dailyCard = h('div', { class: 'card' }, h('h2', {}, '近 7 天流量', trafficLegend()), dCanvas,
+    h('div', { class: 'note', style: { marginTop: '8px' } }, '仅统计本客户端启动内核期间的流量'));
+
+  const ranked = S.nodes.filter((n) => n.latency != null).sort((a, b) => a.latency - b.latency).slice(0, 6);
+  const maxLat = Math.max(500, ...ranked.map((n) => n.latency));
+  const rankBody = ranked.length
+    ? h('div', { class: 'rank' }, ranked.map((n, i) => h('div', { class: 'it' },
+      h('span', { class: 'idx' }, i + 1), h('span', { class: 'nm', title: n.tag }, n.tag),
+      h('div', { class: 'bar' }, h('b', { style: { width: Math.max(4, (n.latency / maxLat) * 100) + '%', background: LAT_COLOR[latClass(n)] } })),
+      h('span', { class: 'ms' }, n.latency + ' ms'))))
+    : h('div', { class: 'unavail' }, '还没有测速结果。到节点页点击“测速全部”。');
+  const rankCard = h('div', { class: 'card' }, h('h2', {}, '节点延迟排行', h('span', { class: 'hint' }, '最快前 6')), rankBody);
+
+  const el = h('div', { class: 'page' },
+    pageHead('网络概览', '连接状态、流量与网络接管，一目了然'),
+    hero, tunSummary(), chartCard, tiles,
+    S.nodes.length === 0
+      ? emptyState('subs', '从添加第一个节点开始', '添加订阅链接或粘贴分享链接后，这里会显示实时流量与统计。', h('button', { class: 'btn primary', onclick: () => goto('subs') }, '去添加订阅'))
+      : h('div', { class: 'row-2' }, dailyCard, rankCard));
+
+  const connV = connTile.el.querySelector('.v'); const memV = memTile.el.querySelector('.v');
+  const sdV = sessTile.el.querySelector('[ref=sd]'); const suV = sessTile.el.querySelector('[ref=su]');
+  const redrawSparks = () => {
+    const ss = X.samples.slice(-60);
+    if (connTile.canvas) drawSpark(connTile.canvas, ss.map((s) => s.conn || 0), { color: '--down' });
+    if (memTile.canvas) drawSpark(memTile.canvas, ss.map((s) => s.mem || 0), { color: '--up' });
+  };
+  const paint = (tk) => {
+    const last = X.samples[X.samples.length - 1];
+    downV.textContent = running && last ? fmtSpeed(last.down) : '-';
+    upV.textContent = running && last ? fmtSpeed(last.up) : '-';
+    const win = X.samples.slice(-120);
+    peakV.textContent = running && win.length ? `峰值 ↓ ${fmtSpeed(Math.max(0, ...win.map((s) => s.down || 0)))}\n峰值 ↑ ${fmtSpeed(Math.max(0, ...win.map((s) => s.up || 0)))}` : '';
+    peakV.style.whiteSpace = 'pre-line';
+    const today = (tk && tk.today) || X.S.today;
+    if (today) { tdV.textContent = '↓ ' + fmtBytes(today.down || 0); tuV.textContent = '↑ ' + fmtBytes(today.up || 0); }
+    if (running) {
+      if (tk) { connV.textContent = String(tk.connections); memV.textContent = fmtBytes(tk.memory); sdV.textContent = '↓ ' + fmtBytes(tk.downTotal); suV.textContent = '↑ ' + fmtBytes(tk.upTotal); }
+      else { connV.textContent = String(last ? last.conn || 0 : 0); }
+    }
+    chart.update(X.samples.slice(-120), running);
+    redrawSparks();
+  };
+  const mount = () => { paint(null); dailyChart.update(days7); };
+  mount();
+  return {
+    el,
+    mount,
+    tick: (tk) => paint(tk),
+    state(S2) { // structural change happened elsewhere (e.g. daily history) - refresh today numbers in place
+      tdV.textContent = '↓ ' + fmtBytes(S2.today.down || 0);
+      tuV.textContent = '↑ ' + fmtBytes(S2.today.up || 0);
+    },
+    resize: () => { paint(null); dailyChart.update(lastDays(X.S.daily, 7)); },
+  };
+};
+
+// preset URL test endpoints (editable via 自定义)
+const TEST_URL_PRESETS = [
+  ['https://www.google.com/generate_204', 'Google'],
+  ['https://cp.cloudflare.com/generate_204', 'Cloudflare'],
+  ['https://www.gstatic.com/generate_204', 'gstatic'],
+];
+function testUrlSelect() {
+  const S = X.S;
+  const cur = S.settings.connectionTestURL;
+  const preset = TEST_URL_PRESETS.find(([u]) => u === cur);
+  const sel = h('select', { 'aria-label': '测速地址', 'data-keep': 'testUrl', style: { maxWidth: '170px' }, title: 'URL 测速地址（经各节点发起真实 HTTPS 请求）' },
+    TEST_URL_PRESETS.map(([u, l]) => h('option', { value: u }, l + ' 204')),
+    h('option', { value: '__custom' }, preset ? '自定义…' : '自定义：' + (cur ? new URL(cur).hostname : '')));
+  sel.value = preset ? cur : '__custom';
+  sel.addEventListener('change', () => {
+    if (sel.value === '__custom') {
+      const inp = h('input', { type: 'url', value: cur, placeholder: 'https://…/generate_204', style: { width: '100%' } });
+      modal('自定义测速地址', h('div', { class: 'field' }, h('label', {}, '必须是 https:// 地址（这版内核会忽略 http://）'), inp),
+        (close) => [h('button', { class: 'btn', onclick: close }, '取消'),
+          h('button', { class: 'btn primary', onclick: (e) => act(async () => { const v = inp.value.trim(); await api('setSettings', { connectionTestURL: v }); close(); }, '测速地址已保存', e.currentTarget) }, '保存')]);
+      return;
+    }
+    act(() => api('setSettings', { connectionTestURL: sel.value }), '测速地址已切换');
+  });
+  return sel;
+}
+
+// ================================================================ nodes
+PAGES.nodes = () => {
+  const S = X.S;
+  if (X.nodeSubFilter !== 'all' && !S.subscriptions.some((sub) => sub.id === X.nodeSubFilter)) X.nodeSubFilter = 'all';
+  const subName = (subId) => { const s = S.subscriptions.find((x) => x.id === subId); return s ? s.name : '-'; };
+  const filter = X.nodeFilter.trim().toLowerCase();
+  const clearFilters = () => { X.nodeFilter = ''; X.nodeSubFilter = 'all'; search.value = ''; subSel.value = 'all'; window.__render(); };
+  let list = S.nodes.filter((n) => !filter || (n.tag + ' ' + n.server + ' ' + n.type + ' ' + subName(n.subId)).toLowerCase().includes(filter));
+  if (X.nodeSubFilter !== 'all') list = list.filter((n) => n.subId === X.nodeSubFilter);
+  if (X.nodeSort === 'latency') list = list.slice().sort((a, b) => (a.latency ?? 1e9) - (b.latency ?? 1e9));
+  else if (X.nodeSort === 'name') list = list.slice().sort((a, b) => a.tag.localeCompare(b.tag, 'zh'));
+
+  // distribution (legend/hint rebuilt in place on latency-only updates)
+  const donut = h('canvas', { class: 'donut', 'aria-label': '节点状态分布' });
+  const legendEl = h('div', { class: 'legend' });
+  const hintEl = h('span', { class: 'hint' });
+  const countNodes = (nodes) => { const c = { good: 0, mid: 0, slow: 0, bad: 0, none: 0 }; nodes.forEach((n) => c[latClass(n)]++); return c; };
+  let counts = countNodes(S.nodes);
+  const refreshDist = (nodes) => {
+    counts = countNodes(nodes);
+    const total = Math.max(1, nodes.length);
+    hintEl.textContent = `共 ${nodes.length} 个节点 · 已测 ${nodes.filter((n) => n.testedAt != null).length} 个`;
+    legendEl.replaceChildren(...Object.keys(counts).map((k) => h('div', { class: 'li' },
+      h('i', { class: 'c-' + k, style: { width: '9px', height: '9px', borderRadius: '3px' } }), LAT_NAME[k],
+      h('div', { class: 'bar-mini' }, h('i', { style: { width: (counts[k] / total) * 100 + '%', background: LAT_COLOR[k] } })),
+      h('b', {}, String(counts[k])))));
+    drawDist();
+  };
+  const drawDist = () => {
+    const colors = { good: CVAR('--ok'), mid: '#84cc16', slow: CVAR('--warn'), bad: CVAR('--bad'), none: CVAR('--ink-3') };
+    drawDonut(donut, Object.keys(counts).map((k) => ({ value: counts[k], color: colors[k] })), String(S.nodes.length), '个节点');
+  };
+  const distCard = h('details', { class: 'card node-distribution', open: true },
+    h('summary', {}, '状态分布与测速说明', hintEl),
+    h('div', { class: 'dist-wrap' }, donut, legendEl),
+    h('div', { class: 'note', style: { marginTop: '10px' } },
+      '测速是 URL Test：内核经每个节点向测速地址发起真实 HTTPS 请求。内核未运行时会自动临时启动内核（不动系统代理），测完自动关闭；仅当内核无法启动时才降级为 TCP 连接测试，并在结果中标注。'));
+
+  const maxLatOf = (nodes) => Math.max(600, ...nodes.map((n) => n.latency || 0));
+  let maxLat = maxLatOf(S.nodes);
+  const latCellFor = (n) => {
+    const cls = latClass(n);
+    return h('td', {}, h('div', { class: 'lat' },
+      h('div', { class: 'bar' }, n.latency != null ? h('b', { style: { width: Math.max(4, (n.latency / maxLat) * 100) + '%', background: LAT_COLOR[cls] } }) : null),
+      h('span', { style: { color: n.latency != null ? LAT_COLOR[cls] : cls === 'bad' ? 'var(--bad)' : 'var(--ink-3)', fontSize: '11.5px', fontWeight: 600, fontVariantNumeric: 'tabular-nums' } },
+        n.latency != null ? n.latency + ' ms' : cls === 'bad' ? '超时' : '未测试'),
+      n.latencyKind ? h('span', { class: 'tag', style: { marginLeft: '6px' } }, n.latencyKind === 'url' ? 'HTTPS' : 'TCP') : null));
+  };
+  const grouped = X.nodeSort === 'default' && !filter && X.nodeSubFilter === 'all' && S.subscriptions.length > 1;
+  const rowEls = list.map((n) => {
+    const tr = h('tr', { class: 'pick' + (n.id === S.selectedId ? ' sel' : ''), 'data-nid': n.id, onclick: () => act(() => api('selectNode', { id: n.id }), `已切换到 ${n.tag}`) },
+      h('td', { style: { width: '34px' } }, h('span', { class: 'radio' + (n.id === S.selectedId ? ' on' : '') })),
+      h('td', { title: n.tag }, h('div', { style: { overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '260px', whiteSpace: 'nowrap' } }, nodeDisplayName(n.tag)),
+        grouped ? null : (n.subId ? h('div', { class: 'mut2', style: { fontSize: '11px' } }, subName(n.subId)) : null)),
+      h('td', {}, h('span', { class: 'tag' }, n.type)),
+      h('td', { class: 'mono mut2' }, `${n.server}:${n.port}`),
+      latCellFor(n),
+      h('td', { class: 'r', style: { whiteSpace: 'nowrap' } },
+        h('button', { class: 'btn small', title: 'URL 测速', disabled: S.testing === true, onclick: (e) => { e.stopPropagation(); act(() => api('testNodes', { ids: [n.id] }), (r) => r.mode === 'url' ? 'URL 测速完成' : '内核未能启动，已降级为 TCP 测试'); } }, '测速'), ' ',
+        h('button', { class: 'btn small ghost', title: '详情', onclick: (e) => { e.stopPropagation(); nodeDetail(n); } }, 'JSON'), ' ',
+        h('button', { class: 'btn small danger', onclick: (e) => { e.stopPropagation(); if (confirm(`删除节点“${n.tag}”？`)) act(() => api('removeNode', { id: n.id }), '已删除'); } }, '删除')));
+    return tr;
+  });
+  const rows = [];
+  if (grouped) {
+    let lastSub = null;
+    list.forEach((n, i) => {
+      if (n.subId !== lastSub) {
+        lastSub = n.subId;
+        const cnt = list.filter((x) => x.subId === n.subId).length;
+        rows.push(h('tr', { class: 'subgroup' }, h('td', { colspan: 6 }, h('span', { class: 'tag accent' }, subName(n.subId)), ` ${cnt} 个节点`)));
+      }
+      rows.push(rowEls[i]);
+    });
+  } else rows.push(...rowEls);
+
+  const search = h('input', { type: 'text', placeholder: '搜索名称、地址、协议、订阅', value: X.nodeFilter, style: { width: '230px' }, 'aria-label': '搜索节点', 'data-keep': 'nodeFilter',
+    oncompositionstart: () => { window.__composing = true; },
+    oncompositionend: (e) => { window.__composing = false; X.nodeFilter = e.target.value; window.__render(); },
+    oninput: (e) => { if (e.isComposing || window.__composing) return; X.nodeFilter = e.target.value; window.__render(); } });
+  const subSel = h('select', { 'aria-label': '按订阅筛选', 'data-keep': 'nodeSubFilter', onchange: (e) => { X.nodeSubFilter = e.target.value; window.__render(); } },
+    h('option', { value: 'all' }, '全部订阅'),
+    S.subscriptions.map((s) => h('option', { value: s.id }, s.name)));
+  subSel.value = X.nodeSubFilter;
+  const sortSel = h('select', { 'aria-label': '排序', 'data-keep': 'nodeSort', onchange: (e) => { X.nodeSort = e.target.value; window.__render(); } },
+    [['default', '默认顺序'], ['latency', '按延迟'], ['name', '按名称']].map(([v, l]) => h('option', { value: v }, l)));
+  sortSel.value = X.nodeSort;
+
+  const filterNotice = h('div', { class: 'node-list-status', 'aria-live': 'polite' },
+    h('b', {}, `显示 ${list.length} / ${S.nodes.length} 个节点`),
+    (filter || X.nodeSubFilter !== 'all') ? h('button', { class: 'btn small', onclick: clearFilters }, '清除筛选，显示全部') : h('span', { class: 'note' }, '未测速的节点也可直接选择使用'));
+  const body = S.nodes.length === 0
+    ? emptyState('nodes', '还没有节点', '添加订阅或导入分享链接后，节点会出现在这里。', h('button', { class: 'btn primary', onclick: () => goto('subs') }, '去添加'))
+    : h('div', { class: 'scroll', 'data-keep-scroll': 'nodes', style: { maxHeight: 'max(240px, calc(100vh - 270px))', minHeight: '240px' } },
+      h('table', { class: 'tbl' },
+        h('thead', {}, h('tr', {}, h('th', { style: { width: '34px' } }, ''), h('th', {}, '名称'), h('th', {}, '协议'), h('th', {}, '地址'), h('th', {}, '延迟'), h('th', { class: 'r' }, '操作'))),
+        h('tbody', {}, rows.length ? rows : h('tr', {}, h('td', { colspan: 6, class: 'mut2', style: { textAlign: 'center', padding: '26px' } }, h('div', { class: 'node-empty-filter' }, h('b', {}, '节点已导入，当前筛选没有匹配结果'), h('button', { class: 'btn primary', onclick: clearFilters }, '显示全部节点')))))));
+
+  // 「URL 测速全部」在测速进行中变为「停止测速」（后端可中断，队列中的节点被丢弃）
+  const mkTestBtn = (testing) => testing
+    ? h('button', { class: 'btn danger', onclick: (e) => act(() => api('stopTestNodes'), undefined, e.currentTarget) }, '停止测速')
+    : h('button', { class: 'btn primary', disabled: S.nodes.length === 0, onclick: (e) => {
+        // respect the subscription filter: "all" tests everything, a specific sub tests only that sub
+        const ids = X.nodeSubFilter === 'all' ? undefined : S.nodes.filter((n) => n.subId === X.nodeSubFilter).map((n) => n.id);
+        act(() => api('testNodes', ids ? { ids } : {}), (r) => r.stopped ? `测速已停止（完成 ${r.done}/${r.count}）` : r.mode === 'url' ? `URL 测速完成（${r.count} 个节点，并发 ${S.settings.testConcurrency}）` : `内核未能启动，已降级为 TCP 连接测试（${r.error || '未知原因'}）`, e.currentTarget);
+      } }, 'URL 测速全部');
+  const tbody = body.querySelector ? body.querySelector('tbody') : null;
+  return {
+    el: h('div', { class: 'page nodes-page' }, pageHead('节点', `${S.nodes.length} 个节点 · 点击行切换当前节点`, testUrlSelect(), search, subSel, sortSel, mkTestBtn(S.testing === true)), filterNotice, distCard, body),
+    mount: () => { refreshDist(S.nodes); distCard.addEventListener('toggle', () => { if (distCard.open) drawDist(); }); },
+    state(S2) {
+      if (!tbody) return;
+      tbody.querySelectorAll('[title="URL 测速"]').forEach((b) => { b.disabled = S2.testing === true; });
+      maxLat = maxLatOf(S2.nodes);
+      for (const n of S2.nodes) {
+        const tr = tbody.querySelector(`tr[data-nid="${CSS.escape(n.id)}"]`);
+        if (!tr) continue;
+        tr.replaceChild(latCellFor(n), tr.children[4]);
+      }
+      if (X.nodeSort === 'latency' && !S2.testing) {
+        const order = S2.nodes.slice().sort((a, b) => (a.latency ?? 1e9) - (b.latency ?? 1e9)).map((n) => n.id);
+        for (const id of order) { const tr = tbody.querySelector(`tr[data-nid="${CSS.escape(id)}"]`); if (tr) tbody.appendChild(tr); }
+      }
+      // during a running test, only refresh the donut every ~2s (each node finishing triggers state)
+      if (S2.testing !== true) refreshDist(S2.nodes);
+      else if (!refreshDist._t) { refreshDist._t = setTimeout(() => { refreshDist._t = null; if (X.S) refreshDist(X.S.nodes); }, 2000); }
+      // swap 测速/停止 button in place when the testing flag flips (avoid a full re-render mid-test)
+      const btn = document.querySelector('.page-head .actions .btn.danger, .page-head .actions .btn.primary');
+      if (btn && ((S2.testing === true) !== (btn.textContent === '停止测速'))) {
+        const fresh = mkTestBtn(S2.testing === true);
+        btn.replaceWith(fresh);
+      }
+    },
+    resize: drawDist,
+    destroy: () => clearTimeout(refreshDist._t),
+  };
+};
+
+function renameSub(s) {
+  const inp = h('input', { type: 'text', value: s.name, style: { width: '100%' } });
+  modal('重命名订阅', h('div', { class: 'field' }, h('label', {}, '新名称'), inp),
+    (close) => [h('button', { class: 'btn', onclick: close }, '取消'),
+      h('button', { class: 'btn primary', onclick: (e) => act(async () => { await api('renameSub', { id: s.id, name: inp.value }); close(); }, '已重命名', e.currentTarget) }, '保存')]);
+}
+
+function nodeDetail(n) {
+  const raw = JSON.stringify({ id: n.id, tag: n.tag, type: n.type, server: n.server, port: n.port, latency: n.latency, latencyKind: n.latencyKind, testedAt: n.testedAt ? new Date(n.testedAt).toLocaleString() : null }, null, 2);
+  modal('节点详情：' + n.tag,
+    h('div', {}, h('div', { style: { display: 'flex', gap: '8px', marginBottom: '10px', flexWrap: 'wrap' } },
+      h('span', { class: 'tag accent' }, n.type), n.latency != null ? h('span', { class: 'tag ' + latClass(n) }, n.latency + ' ms') : h('span', { class: 'tag' }, '未测速')),
+      h('pre', { class: 'code' }, raw)),
+    (close) => [
+      h('button', { class: 'btn', onclick: close }, '关闭'),
+      h('button', { class: 'btn primary', onclick: () => { navigator.clipboard.writeText(raw).then(() => toast('已复制到剪贴板')); } }, '复制'),
+    ]);
+}
+
+// ================================================================ subscriptions
+PAGES.subs = () => {
+  const S = X.S;
+  const name = h('input', { type: 'text', placeholder: '名称（可留空，默认取域名）', 'aria-label': '订阅名称' });
+  const url = h('input', { type: 'url', placeholder: 'https://example.com/sub?token=…', 'aria-label': '订阅链接', style: { flex: '1' } });
+  const addBtn = h('button', { class: 'btn primary', onclick: (e) => act(async () => {
+    const r = await api('addSub', { name: name.value.trim(), url: url.value.trim() }); name.value = ''; url.value = ''; await showImportedNodes(); return r;
+  }, (r) => `已导入 ${r.count} 个节点` + (r.errors.length ? `，${r.errors.length} 条无法识别` : ''), e.currentTarget) }, '添加订阅');
+  const addCard = h('div', { class: 'card' }, h('h2', {}, '添加订阅'),
+    h('div', { class: 'toolbar' }, name, url, addBtn),
+    h('div', { class: 'note', style: { marginTop: '10px' } }, '支持 base64 / 明文链接列表、Clash YAML、sing-box JSON 三种格式。流量与到期信息来自订阅头 subscription-userinfo。'));
+
+  const links = h('textarea', { placeholder: '每行一个分享链接：vmess:// vless:// trojan:// ss:// hysteria2:// tuic:// socks:// http://', 'aria-label': '分享链接', style: { width: '100%', minHeight: '84px' } });
+  const impBtn = h('button', { class: 'btn', onclick: (e) => act(async () => { const r = await api('importLinks', { text: links.value }); links.value = ''; await showImportedNodes(); return r; }, (r) => `已导入 ${r.count} 个节点` + (r.errors.length ? `，${r.errors.length} 条无法识别` : ''), e.currentTarget) }, '导入分享链接');
+  const linkCard = h('div', { class: 'card' }, h('h2', {}, '导入分享链接'), links, h('div', { style: { marginTop: '10px' } }, impBtn));
+
+  const cards = S.subscriptions.map((s) => {
+    const info = s.info; const used = info ? info.upload + info.download : 0;
+    const days = info && info.expire ? Math.ceil((info.expire * 1000 - Date.now()) / 86400000) : null;
+    return h('div', { class: 'card', style: { marginBottom: '12px' } },
+      h('div', { style: { display: 'flex', alignItems: 'flex-start', gap: '12px' } },
+        h('div', { style: { flex: '1', minWidth: '0' } },
+          h('div', { class: 'toolbar' }, h('b', { style: { fontSize: '14px' } }, s.name),
+            h('span', { class: 'tag' }, `${s.count || 0} 个节点`),
+            s.format ? h('span', { class: 'tag accent' }, s.format) : null,
+            days != null && days >= 0 ? h('span', { class: 'tag ' + (days < 7 ? 'bad' : days < 30 ? 'warn' : 'ok') }, `剩余 ${days} 天`) : null),
+          h('div', { class: 'note', style: { marginTop: '6px' } }, s.url ? s.url.replace(/([?&](token|key|sub)[^=]*=)[^&]+/gi, '$1***') : '手动导入', ` · 更新于 ${fmtTime(s.updatedAt)}`),
+          info && info.total ? h('div', { style: { marginTop: '10px' } },
+            h('div', { class: 'progress' }, h('b', { style: { width: Math.min(100, (used / info.total) * 100) + '%' } })),
+            h('div', { class: 'note', style: { marginTop: '5px' } }, `已用 ${fmtBytes(used)} / ${fmtBytes(info.total)}（${((used / info.total) * 100).toFixed(1)}%）` + (info.expire ? ` · 到期 ${fmtDate(info.expire * 1000)}` : ''))) : null,
+          s.error ? h('div', { class: 'err', style: { marginTop: '8px' } }, '更新失败：' + s.error) : null,
+          s.errors && s.errors.length ? h('div', { class: 'note', style: { marginTop: '6px' } }, `${s.errors.length} 条未能识别（例如：${s.errors[0].error}）`) : null),
+        h('div', { style: { display: 'flex', gap: '8px', flex: 'none' } },
+          s.url ? h('button', { class: 'btn small', onclick: (e) => act(() => api('updateSub', { id: s.id }), (r) => `已更新，共 ${r.count} 个节点`, e.currentTarget) }, '更新') : null,
+          h('button', { class: 'btn small', title: '重命名', onclick: () => renameSub(s) }, '重命名'),
+          h('button', { class: 'btn small danger', onclick: () => confirm(`删除订阅“${s.name}”及其全部节点？`) && act(() => api('removeSub', { id: s.id }), '已删除') }, '删除'))));
+  });
+
+  const updAll = h('button', { class: 'btn', disabled: !S.subscriptions.some((s) => s.url), onclick: (e) => act(() => api('updateAllSubs'), '全部订阅已更新', e.currentTarget) }, '更新全部');
+  const fileBtn = h('button', { class: 'btn', title: '从本地文件导入订阅内容（base64 / 链接列表 / Clash YAML / sing-box / SIP008 JSON）', onclick: (e) => act(async () => { const r = await api('subFile'); if (!r.canceled) await showImportedNodes(); return r; }, (r) => r && r.canceled ? '' : `已从文件导入 ${r.count} 个节点` + (r.errors.length ? `，${r.errors.length} 条无法识别` : ''), e.currentTarget) }, '导入订阅文件');
+  const autoNote = h('div', { class: 'note', style: { marginTop: '10px' } }, S.settings.autoUpdateSubsMin > 0 ? `订阅每 ${S.settings.autoUpdateSubsMin} 分钟自动更新（可在设置中修改）。` : '订阅自动更新未开启，可在设置中配置间隔。');
+  return {
+    el: h('div', { class: 'page' },
+      pageHead('订阅', `${S.subscriptions.length} 个订阅来源`, fileBtn, updAll),
+      h('div', { class: 'grid cols-2', style: { marginBottom: '14px' } }, addCard, linkCard),
+      autoNote, h('div', { style: { height: '10px' } }),
+      cards.length ? h('div', {}, cards) : emptyState('subs', '还没有订阅', '添加订阅链接或导入分享链接后，节点会出现在节点页。')),
+  };
+};
+
+// ================================================================ rules
+PAGES.rules = () => {
+  const S = X.S;
+  const outName = { proxy: '代理', direct: '直连', block: '拦截' };
+  const outTag = (o) => h('span', { class: 'tag ' + (o === 'proxy' ? 'accent' : o === 'direct' ? 'ok' : 'bad') }, outName[o] || o);
+
+  const outTagFor = (outboundText) => {
+    if (outboundText === '走代理' || /走代理/.test(outboundText)) return h('span', { class: 'tag accent' }, '代理');
+    if (outboundText === '直连') return h('span', { class: 'tag ok' }, '直连');
+    if (/^拦截/.test(outboundText)) return h('span', { class: 'tag bad' }, '拦截');
+    return h('span', { class: 'tag' }, outboundText); // 嗅探 / DNS 劫持等动作
+  };
+  const chain = S.routePreview && S.routePreview.length
+    ? h('div', { class: 'chain' }, S.routePreview.map((r, i) => h('div', { class: 'step' + (i === S.routePreview.length - 1 ? ' final' : '') },
+      h('span', { class: 'n' }, i + 1), h('span', { class: 'm', title: r.match }, r.match), h('span', { class: 'mut2' }, '→'), outTagFor(r.outbound))))
+    : h('div', { class: 'unavail' }, '添加节点后，这里会按顺序显示内核实际生效的完整规则链（来自真实生成的配置）。');
+
+  const routeCard = h('div', { class: 'card', style: { marginBottom: '14px' } },
+    h('h2', {}, '当前生效规则链', h('span', { class: 'hint' }, S.settings.mode === 'rule' ? '规则模式：大陆域名与 IP 直连' : '全局模式：全部走代理')),
+    h('div', { class: 'toolbar', style: { marginBottom: '12px' } }, h('span', { class: 'mut2' }, '模式：'), segMode()),
+    chain,
+    h('div', { class: 'note', style: { marginTop: '10px' } }, '规则链来自启动内核时生成的真实 sing-box 配置，按顺序匹配，命中即停止。规则模式下 geosite-cn / geoip-cn 规则集首次使用需联网下载。'));
+
+  const rows = S.rules.map((r) => h('tr', {},
+    h('td', { style: { width: '44px' } }, h('input', { type: 'checkbox', checked: r.enabled !== false, 'aria-label': '启用', onchange: (e) => act(() => api('saveRule', { ...r, enabled: e.target.checked }), '已保存，内核已重启') })),
+    h('td', {}, r.name || '(未命名)'),
+    h('td', { class: 'mono mut2', style: { fontSize: '11.5px' } }, [r.domain && '域名: ' + r.domain.split(/[\n,]/)[0] + (r.domain.split(/[\n,]/).filter(Boolean).length > 1 ? ' …' : ''), r.ip && 'IP: ' + r.ip, r.port && '端口: ' + r.port, r.processName && '进程: ' + r.processName, r.network && r.network !== 'any' && r.network.toUpperCase(), r.protocol && '协议: ' + r.protocol].filter(Boolean).join('　')),
+    h('td', {}, outTag(r.outbound)),
+    h('td', { class: 'r', style: { whiteSpace: 'nowrap' } },
+      h('button', { class: 'btn small', onclick: () => ruleForm(r) }, '编辑'), ' ',
+      h('button', { class: 'btn small danger', onclick: () => confirm('删除这条规则？') && act(() => api('removeRule', { id: r.id }), '已删除') }, '删除'))));
+
+  const body = S.rules.length
+    ? h('div', { class: 'scroll', 'data-keep-scroll': 'rules' }, h('table', { class: 'tbl' },
+      h('thead', {}, h('tr', {}, h('th', {}, '启用'), h('th', {}, '名称'), h('th', {}, '匹配条件'), h('th', {}, '出站'), h('th', { class: 'r' }, '操作'))), h('tbody', {}, rows)))
+    : emptyState('rules', '没有自定义规则', '自定义规则在内置规则之后、兜底规则之前生效，保存后内核自动重启。', h('button', { class: 'btn primary', onclick: () => ruleForm() }, '新建规则'));
+
+  const importRuleBtn = h('button', { class: 'btn', title: '从本地文件导入规则（Clash 规则行 / JSON 规则数组）', onclick: (e) => act(() => api('ruleFile'), (r) => r && r.canceled ? '' : `已导入 ${r.imported} 条规则` + (r.skipped ? `，跳过 ${r.skipped} 条（${(r.warnings && r.warnings[0]) || '不支持'}）` : '') + '，内核已重启生效', e.currentTarget) }, '导入规则文件');
+  return { el: h('div', { class: 'page' }, pageHead('代理规则', '自定义分流规则与实际生效顺序', importRuleBtn, h('button', { class: 'btn primary', onclick: () => ruleForm() }, '新建规则')), quickRoutingCard(), routeCard, body) };
+};
+
+function ruleForm(r = {}) {
+  const f = {
+    name: h('input', { type: 'text', value: r.name || '', placeholder: '例如 广告拦截' }),
+    domain: h('textarea', { placeholder: 'example.com（后缀匹配）\nfull:www.example.com（完整域名）\nkeyword:ads（关键字）\nregexp:^ad\\d+\\.', value: r.domain || '' }),
+    ip: h('input', { type: 'text', placeholder: '10.0.0.0/8, 8.8.8.8/32', value: r.ip || '' }),
+    port: h('input', { type: 'text', placeholder: '80, 443, 1000-2000', value: r.port || '' }),
+    processName: h('input', { type: 'text', placeholder: '例如 chrome.exe, telegram.exe（Windows 按进程分流）', value: r.processName || '' }),
+    network: h('select', {}, ['any', 'tcp', 'udp'].map((v) => h('option', { value: v }, v === 'any' ? '全部' : v.toUpperCase()))),
+    protocol: h('input', { type: 'text', placeholder: 'http, tls, quic, dns（需开启流量探测）', value: r.protocol || '' }),
+    outbound: h('select', {}, [['proxy', '走代理'], ['direct', '直连'], ['block', '拦截']].map(([v, l]) => h('option', { value: v }, l))),
+  };
+  f.network.value = r.network || 'any'; f.outbound.value = r.outbound || 'proxy';
+  const fld = (l, el, span, hint) => h('div', { class: 'field' + (span ? ' span2' : '') }, h('label', {}, l), el, hint ? h('div', { class: 'note' }, hint) : null);
+  const body = h('div', { class: 'form-grid' },
+    fld('名称', f.name, 1), fld('出站', f.outbound),
+    fld('域名（每行一条）', f.domain, 1), fld('目标 IP / CIDR', f.ip), fld('端口', f.port),
+    fld('进程名', f.processName, 0, 'Windows 上按进程分流，相当于手机版的应用分代理'),
+    fld('网络', f.network), fld('协议（探测结果）', f.protocol, 0, '需要开启流量探测'));
+  modal(r.id ? '编辑规则' : '新建规则', body, (close) => [
+    h('button', { class: 'btn', onclick: close }, '取消'),
+    h('button', { class: 'btn primary', onclick: (e) => act(async () => {
+      await api('saveRule', { id: r.id, enabled: r.enabled !== false, name: f.name.value, domain: f.domain.value, ip: f.ip.value, port: f.port.value, processName: f.processName.value, network: f.network.value, protocol: f.protocol.value, outbound: f.outbound.value });
+      close();
+    }, '规则已保存，内核已重启', e.currentTarget) }, '保存'),
+  ]);
+}
+
+// ================================================================ connections
+PAGES.conns = () => {
+  const running = isRunning();
+  const wrap = h('div', {});
+  let alive = true; let lastList = []; let drawing = false;
+  const countEl = h('span', { class: 'mut2' }, running ? '' : '');
+  const netChips = ['all', 'tcp', 'udp'].map((v) => h('button', { class: 'chip' + (X.connNet === v ? ' on' : ''), onclick: () => { X.connNet = v; netChips.forEach((b, i) => b.classList.toggle('on', ['all', 'tcp', 'udp'][i] === v)); draw(); } }, v === 'all' ? '全部' : v.toUpperCase()));
+  const search = h('input', { type: 'text', placeholder: '搜索目标、进程、规则', value: X.connSearch, style: { width: '200px' }, 'data-keep': 'connSearch', oninput: (e) => { X.connSearch = e.target.value; draw(lastList); } });
+
+  // stat tiles
+  const connN = h('div', { class: 'v' }, running ? '0' : '-');
+  const rateD = h('div', { class: 'v down-c' }, running ? '-': '-'); const rateU = h('div', { class: 'v up-c' }, running ? '-' : '-');
+  const sumD = h('div', { class: 'v down-c' }, fmtBytes(X.S.session.downTotal)); const sumU = h('div', { class: 'v up-c' }, fmtBytes(X.S.session.upTotal));
+  const spark = h('canvas', { class: 'spark' });
+  const tiles = h('div', { class: 'grid cols-4', style: { margin: '0 0 14px' } },
+    h('div', { class: 'card tile' }, h('div', { class: 'k' }, '活动连接'), connN, spark),
+    h('div', { class: 'card tile' }, h('div', { class: 'k' }, h('i', { style: { background: 'var(--down)', width: '9px', height: '9px', borderRadius: '3px' } }), '实时下载'), rateD),
+    h('div', { class: 'card tile' }, h('div', { class: 'k' }, h('i', { style: { background: 'var(--up)', width: '9px', height: '9px', borderRadius: '3px' } }), '实时上传'), rateU),
+    h('div', { class: 'card tile' }, h('div', { class: 'k' }, '本次运行累计'), h('div', { class: 'duo' }, h('div', {}, sumD), h('div', {}, sumU))));
+
+  // per-process ranking (real data: aggregated from the live connection list)
+  const procBox = h('div', {});
+  const procCard = h('div', { class: 'card', style: { marginBottom: '14px' } }, h('h2', {}, '进程流量排行', h('span', { class: 'hint' }, '按当前活动连接累计')), procBox);
+
+  const procRow = (name, down, up, max) => h('div', { class: 'rank' },
+    h('div', { class: 'it' }, h('span', { class: 'nm', title: name }, name),
+      h('div', { class: 'bar' }, h('b', { style: { width: Math.max(3, ((down + up) / max) * 100) + '%', background: 'var(--down)' } })),
+      h('span', { class: 'ms' }, fmtBytes(down + up))));
+
+  const draw = async () => {
+    if (!alive || drawing) return;
+    drawing = true;
+    let list = [];
+    try { if (isRunning()) list = await api('connections'); } catch { /* core stopping */ }
+    finally { drawing = false; }
+    lastList = list;
+    if (!alive) return;
+    const running2 = isRunning();
+    connN.textContent = running2 ? String(list.length) : '-';
+    const last = X.samples[X.samples.length - 1];
+    if (running2 && last) { rateD.textContent = fmtSpeed(last.down || 0); rateU.textContent = fmtSpeed(last.up || 0); }
+    else { rateD.textContent = '-'; rateU.textContent = '-'; }
+    drawSpark(spark, X.samples.slice(-60).map((s) => s.conn || 0), { color: '--down' });
+    // process ranking
+    const byProc = {};
+    for (const c of list) { const k = c.process || ''; if (!k) continue; const o = (byProc[k] ||= { down: 0, up: 0 }); o.down += c.download || 0; o.up += c.upload || 0; }
+    const procs = Object.entries(byProc).map(([name, v]) => ({ name, ...v })).sort((a, b) => (b.down + b.up) - (a.down + a.up)).slice(0, 6);
+    procBox.replaceChildren();
+    if (!running2) procBox.append(h('div', { class: 'unavail' }, '内核未运行。启动后这里显示按进程聚合的真实流量。'));
+    else if (!procs.length) procBox.append(h('div', { class: 'note' }, list.length ? '当前连接没有可识别的进程信息（内核仅在能解析进程时提供，例如本机发起的连接）。' : '暂无活动连接。'));
+    else {
+      const max = Math.max(...procs.map((p) => p.down + p.up), 1);
+      procs.forEach((p) => procBox.append(procRow(p.name, p.down, p.up, max)));
+    }
+
+    const keepTop = wrap.firstChild && wrap.firstChild.classList && wrap.firstChild.classList.contains('scroll') ? wrap.firstChild.scrollTop : 0;
+    countEl.textContent = running2 ? `${list.length} 条活动连接` : '内核未运行';
+    if (!running2) { wrap.replaceChildren(emptyState('conns', '内核未运行', '启动后这里会实时列出所有经过代理内核的连接。', h('button', { class: 'btn primary', onclick: () => goto('home') }, '去启动'))); return; }
+    if (!list.length) { wrap.replaceChildren(emptyState('conns', '暂无活动连接', '有程序通过代理访问网络时会显示在这里。')); return; }
+    const now = Date.now();
+    const q = X.connSearch.toLowerCase();
+    const shown = list.filter((c) => X.connNet === 'all' || (c.network || '').toLowerCase() === X.connNet)
+      .filter((c) => !q || (`${c.host} ${c.process} ${c.rule} ${(c.chains || []).join(' ')}`).toLowerCase().includes(q));
+    const rows = shown.slice().sort((a, b) => new Date(b.start) - new Date(a.start)).slice(0, 300).map((c) => h('tr', { 'data-cid': c.id },
+      h('td', { title: c.host }, h('div', { style: { maxWidth: '230px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, `${c.host}:${c.port}`)),
+      h('td', {}, c.process ? h('span', { class: 'tag' }, c.process) : h('span', { class: 'mut2' }, '-')),
+      h('td', {}, h('span', { class: 'tag' }, (c.network || '').toUpperCase())),
+      h('td', { class: 'mut2', style: { fontSize: '11.5px' } }, c.rule ? (c.rule === 'final' ? '默认规则' : c.rule) + (c.rulePayload ? ' ' + c.rulePayload : '') : '-'),
+      h('td', { class: 'mut2', style: { fontSize: '11.5px', maxWidth: '160px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, (c.chains || []).slice().reverse().join(' → ')),
+      h('td', { class: 'r mono' }, fmtBytes(c.upload)), h('td', { class: 'r mono' }, fmtBytes(c.download)),
+      h('td', { class: 'r mut2', style: { fontVariantNumeric: 'tabular-nums' } }, fmtDur(now - new Date(c.start).getTime())),
+      h('td', { class: 'r' }, h('button', { class: 'btn small', onclick: () => act(() => api('closeConn', { id: c.id }), '已关闭连接') }, '关闭'))));
+    const freshScroll = h('div', { class: 'scroll', style: { maxHeight: 'calc(100vh - 460px)', minHeight: '160px' } },
+      h('table', { class: 'tbl' },
+        h('thead', {}, h('tr', {}, ['目标', '进程', '网络', '规则', '出站链路', '上传', '下载', '时长', ''].map((t, i) => h('th', { class: i > 3 && i < 8 ? 'r' : '' }, t)))),
+        h('tbody', {}, rows.length ? rows : h('tr', {}, h('td', { colspan: 9, class: 'mut2', style: { textAlign: 'center', padding: '26px' } }, '没有匹配的连接')))));
+    const oldBody = wrap.querySelector('tbody');
+    if (oldBody && rows.length) {
+      const keep = new Set(rows.map((r) => r.dataset.cid));
+      [...oldBody.children].forEach((r) => { if (!keep.has(r.dataset.cid)) r.remove(); });
+      rows.forEach((fresh, index) => {
+        const existing = [...oldBody.children].find((r) => r.dataset.cid === fresh.dataset.cid);
+        const row = existing || fresh;
+        if (existing) [...fresh.children].slice(0, -1).forEach((cell, i) => {
+          if (!existing.children[i].isEqualNode(cell)) existing.replaceChild(cell, existing.children[i]);
+        });
+        if (oldBody.children[index] !== row) oldBody.insertBefore(row, oldBody.children[index] || null);
+      });
+    } else wrap.replaceChildren(freshScroll);
+    if (keepTop) wrap.firstChild.scrollTop = keepTop; // 1s rebuilds must not scroll the table back to the top
+  };
+  const timer = setInterval(draw, 1000);
+  return {
+    el: h('div', { class: 'page' },
+      pageHead('连接', '实时活动连接（每秒刷新）', h('div', { class: 'toolbar' }, netChips), search, countEl,
+        h('button', { class: 'btn danger', disabled: !running, onclick: () => act(() => api('closeAll'), '已关闭全部连接') }, '关闭全部')),
+      tiles, procCard, wrap),
+    mount: draw,
+    destroy: () => { alive = false; clearInterval(timer); },
+  };
+};
+
+function purityDetail(g, pu) {
+  if (!pu) return;
+  const isReal = pu.source === 'ip.net.coffee';
+  const rows = isReal ? [
+    ['被检测 IP', g && g.ip || '-'],
+    ['数据来源', pu.fallback ? `ip.net.coffee 不可达，降级为关键词推断（${pu.fallbackReason || ''}）` : 'ip.net.coffee（真实风控数据库）'],
+    ['信任分', pu.trustScore != null ? `${pu.trustScore} / 100` : String(pu.score)],
+    ['IP 类型', pu.type || '-'],
+    ['所属组织', pu.company || '-'],
+    ['ASN', pu.asn ? 'AS' + pu.asn : '-'],
+    ['风险标记', pu.flags && pu.flags.length ? pu.flags.join('、') : '（无）'],
+    pu.abuserScore ? ['滥用分', `${pu.abuserScore}${pu.abuserLevel ? '（' + pu.abuserLevel + '）' : ''}`] : null,
+    pu.threats && pu.threats.length ? ['威胁条目', pu.threats.join('、')] : null,
+    ['Reddit 封锁', pu.redditBlocked ? '是' : '否'],
+    pu.aiVerdict ? ['AI 判定', `${pu.aiVerdict.label}（置信度 ${pu.aiVerdict.confidence}%）— ${pu.aiVerdict.reasoning}`] : null,
+  ].filter(Boolean) : [
+    ['被检测 IP', g && g.ip || '-'],
+    ['国家/地区', [g && g.country, g && g.city].filter(Boolean).join(' · ') || '-'],
+    ['ISP', pu.isp || pu.company || '-'],
+    ['ASN 组织', pu.asnOrg || '-'],
+    ['命中关键词', pu.hits && pu.hits.length ? pu.hits.join('、') : '（无命中）'],
+    ['评分', `${pu.score}（${pu.level}）`],
+  ];
+  modal('IP 纯净度详情', h('div', {},
+    h('div', { class: 'toolbar', style: { marginBottom: '14px' } },
+      h('span', { class: 'purity ' + (pu.score >= 85 ? 'good' : pu.score >= 60 ? 'mid' : 'bad'), style: { display: 'inline-flex' } },
+        h('b', { class: 'purity-score' }, String(pu.score)), h('span', { class: 'purity-label' }, pu.level)),
+      isReal && !pu.fallback ? h('span', { class: 'tag ok', style: { marginLeft: '8px' } }, '真实风控数据') : h('span', { class: 'tag warn', style: { marginLeft: '8px' } }, '推断')),
+    h('table', { class: 'tbl' }, h('tbody', {}, rows.map(([k, v]) => h('tr', {}, h('td', { style: { width: '120px', color: 'var(--ink-3)' } }, k), h('td', { class: 'mono', style: { fontSize: '11.5px' } }, String(v))))),
+    h('div', { class: 'note', style: { marginTop: '12px' } },
+      isReal ? '数据来自 ip.net.coffee 真实风控数据库。' : '基于 ip.sb 的 ISP/ASN 归属关键词推断，非商业风控数据库评分。', h('br'),
+      isReal ? '可在 ip.net.coffee/ip/' + (g && g.ip || '') + ' 自行查证。' : '可在 ip.sb/' + (g && g.ip || '') + ' 自行查证。')),
+    ),
+    (close) => [h('button', { class: 'btn primary', onclick: close }, '知道了')]);
+}
+
+// ================================================================ geo map
+let WORLD_GEO = null;
+// Cross-page geo cache: survives sidebar switches so re-entering the map page
+// shows the last known positions instantly instead of re-querying everything.
+// TTL: exit/direct 2 min (the exit IP changes only when the node changes),
+// node 10 min (server IPs are essentially static), targets never cached (live).
+const GEO_CACHE = { exit: null, exitAt: 0, direct: null, directAt: 0, node: null, nodeSelId: null, nodeServer: null, nodeAt: 0 }; // world GeoJSON loaded once per app run
+PAGES.geo = () => {
+  const S = X.S;
+  const running = isRunning();
+  X.geoView = X.geoView || 'flat'; // 'flat' | 'globe' (persisted across page switches)
+
+  // ---- IP detection card (redesigned port of the Android IP 检测 feature; data via ip.sb)
+  const exitIp = h('b', { class: 'ip' }, '检测中…');
+  const exitTag = h('span', { class: 'tag accent', style: { visibility: 'hidden' } }, '');
+  const exitLoc = h('div', { class: 'loc' }, '');
+  const exitMeta = h('div', { class: 'meta' }, '来源 ip.sb');
+  const directIp = h('div', { class: 'v' }, '检测中…');
+  const directLoc = h('div', { class: 'loc', style: { fontSize: '12px' } }, '');
+  const fillIpCard = (geo, err) => {
+    if (err) { exitIp.textContent = '检测失败'; exitTag.style.visibility = 'hidden'; exitLoc.textContent = err; exitMeta.textContent = '来源 ip.sb'; return; }
+    exitIp.textContent = geo.ip || '-';
+    exitIp.classList.toggle('long-ip', (geo.ip || '').length > 26);
+    exitTag.textContent = geo.country_code || ''; exitTag.style.visibility = geo.country_code ? 'visible' : 'hidden';
+    exitLoc.textContent = [geo.city, geo.region, geo.country].filter(Boolean).join(' · ');
+    exitMeta.textContent = `检测于 ${new Date().toLocaleTimeString()} · 来源 ip.sb · ${geo.isp || ''}${geo.asn ? ' (AS' + geo.asn + ')' : ''}`;
+  };
+  const fillDirect = (geo, err) => {
+    directIp.textContent = err ? '失败' : (geo.ip || '-');
+    directIp.classList.toggle('long-ip', !err && (geo.ip || '').length > 26);
+    directLoc.textContent = err ? err : [geo.country, geo.city].filter(Boolean).join(' · ');
+  };
+  const nodePurity = h('span', { class: 'purity', style: { display: 'none' },
+    title: 'IP 纯净度：基于 ip.sb 的 ISP/ASN 归属推断（机房/住宅/一般），非商业风控数据库评分' },
+    h('b', { class: 'purity-score' }, '-'), h('span', { class: 'purity-label' }, '纯净度'));
+  const showPurity = (pu) => {
+    if (!pu) { nodePurity.style.display = 'none'; return; }
+    nodePurity.style.display = '';
+    nodePurity.querySelector('.purity-score').textContent = pu.score;
+    nodePurity.classList.remove('good', 'mid', 'bad');
+    nodePurity.classList.add(pu.score >= 85 ? 'good' : pu.score >= 60 ? 'mid' : 'bad');
+    nodePurity.title = `节点 IP 纯净度 ${pu.score}（${pu.level}）：${pu.basis}。${pu.note}`;
+  };
+  // Exit-country view: while connected, the EXIT location (state.exit) is what matters;
+  // the entry server (state.node) is only context. Display exits-first.
+  const purityBtn = h('button', { class: 'btn small', title: '对当前出口 IP 运行纯净度检测（ip.net.coffee 风控数据）',
+    onclick: (e) => act(async () => {
+      if (!isRunning()) throw new Error('请先启动内核并连接节点');
+      const sel = X.S.nodes.find((n) => n.id === X.S.selectedId);
+      let pu; let target = '出口';
+      if (ok(state.exit)) {
+        pu = await api('geoPurity', { ip: state.exit.ip }).catch(() => null);
+      }
+      if (!pu) {
+        // fall back to the entry server IP
+        if (!sel) throw new Error('未选择节点');
+        const all = await api('geoNodes', { servers: [sel.server] });
+        const g = all[sel.server];
+        if (!g || g.error) throw new Error((g && g.error) || '节点定位失败');
+        pu = g.purity; target = '节点服务器';
+      }
+      if (!pu) throw new Error('未能取得纯净度评估');
+      showPurity(pu);
+      purityDetail(state.exit, pu);
+      return pu;
+    }, (pu) => `纯净度：${pu.score}（${pu.level}）`, e.currentTarget) }, '纯净度检测');
+
+  const nodeInfo = (() => {
+    const main = h('div', { style: { display: 'flex', flexDirection: 'column', gap: '2px', minHeight: '58px' } }, h('span', { class: 'mut2' }, '连接节点后显示出口国家'));
+    return { el: h('div', { class: 'card tile' }, h('div', { class: 'k' }, '节点出口国家', h('span', { class: 'hint' }, '网站看到的国家')), main,
+      h('div', { style: { marginTop: '8px' } }, purityBtn)), main };
+  })();
+  const fillExitNode = () => {
+    const el = nodeInfo.main; el.replaceChildren();
+    const sel = X.S.nodes.find((n) => n.id === X.S.selectedId);
+    if (!isRunning()) {
+      el.append(h('span', { class: 'mut2' }, '启动内核并连接节点后，这里显示该节点的出口国家与纯净度。'));
+      showPurity(null); return;
+    }
+    if (state.exit && state.exit.error) {
+      el.append(h('span', { class: 'err' }, '出口查询失败：' + state.exit.error),
+        h('span', { class: 'mut2', style: { fontSize: '11px' } }, '经代理查询出口位置失败。请检查节点是否可用。'));
+      showPurity(null); return;
+    }
+    if (ok(state.exit)) {
+      el.append(h('b', { style: { fontSize: '15px' } }, state.exit.country || '-'),
+        h('span', { class: 'mut' }, [state.exit.city, state.exit.region].filter(Boolean).join(' · ') || ''),
+        h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, `出口 IP ${state.exit.ip}` + (sel ? ` · 节点：${sel.tag}` : '')));
+      if (state.node && !state.node.error) {
+        el.append(h('span', { class: 'mut2', style: { fontSize: '11px' } }, `入口机房：${state.node.country || ''}${state.node.city ? ' · ' + state.node.city : ''}（${state.node.isp || ''}）`));
+      }
+    } else {
+      el.append(h('span', { class: 'mut2' }, '正在查询出口位置…'));
+    }
+    // purity chip reflects the EXIT IP when available, otherwise the node server IP
+    if (ok(state.exit) && state.exit.purity) showPurity(state.exit.purity);
+    else if (state.node && state.node.purity) showPurity(state.node.purity);
+    else showPurity(null);
+  };
+
+  // ---- dual view: flat 2D map + 3D globe
+  const flatCanvas = h('canvas', { style: { width: '100%', height: '440px', display: 'block', borderRadius: '8px', touchAction: 'none' } });
+  const globeBox = h('div', { class: 'globe-view' });
+  const countryList = h('div', { class: 'geo-country-list', 'aria-live': 'polite' });
+  const globeLayout = h('div', { class: 'globe-layout', style: { display: 'none' } }, globeBox, h('aside', { class: 'geo-countries' }, h('h3', {}, '国家 / 地区'), h('p', { class: 'note' }, '按目标地址统计活动连接'), countryList));
+  const mapHolder = h('div', {}, flatCanvas);
+  let map = null; let globe = null; let spinOn = true; // 自转开关（3D 视图）
+  const state = { exit: null, direct: null, node: null, targets: [], targetGeos: [], unknown: 0, total: 0, targetError: '' };
+  const showCountries = () => {
+    if (state.targetError) { countryList.replaceChildren(h('p', { class: 'note' }, state.targetError)); return; }
+    countryList.replaceChildren(...(state.targetGeos.length ? state.targetGeos.map((g) => h('div', { class: 'geo-country-row' }, h('span', {}, g.country || g.country_code), h('b', {}, g.count + ' 条'))) : [h('p', { class: 'note' }, isRunning() ? '暂无已定位的活动连接' : '启动连接后显示')]), h('div', { class: 'geo-country-total' }, h('span', {}, '未定位（含查询失败）'), h('b', {}, state.unknown + ' 条')), h('p', { class: 'note' }, '共 ' + state.total + ' 条活动连接；私网、合成地址及缺少真实 IP 的连接无法按真实目的地定位。'));
+  };
+  showCountries();
+  const ok = (g) => g && !g.error && Number.isFinite(g.longitude) && Number.isFinite(g.latitude);
+  const code = (g) => (g && !g.error && /^[A-Za-z]{2}$/.test(g.country_code || '') ? g.country_code.toUpperCase() : null);
+
+  const flatDraw = () => {
+    if (!map || X.geoView !== 'flat') return;
+    const markers = []; const arcs = [];
+    const AC = CVAR('--accent'); const DC = CVAR('--down'); const UC = CVAR('--up');
+    if (ok(state.direct)) markers.push({ lon: state.direct.longitude, lat: state.direct.latitude, color: UC, r: 3.5, label: '直连' });
+    if (ok(state.exit)) markers.push({ lon: state.exit.longitude, lat: state.exit.latitude, color: AC, r: 5, label: running ? '出口' : '本机', pulse: true });
+    if (ok(state.node)) markers.push({ lon: state.node.longitude, lat: state.node.latitude, color: DC, r: 4.5, label: '节点' });
+    if (ok(state.exit) && ok(state.node)) arcs.push({ from: { lon: state.exit.longitude, lat: state.exit.latitude }, to: { lon: state.node.longitude, lat: state.node.latitude }, color: AC, width: 2, alpha: 0.85 });
+    const shown = new Set();
+    for (const t of state.targets) {
+      const k = t.lon + ',' + t.lat; if (shown.has(k)) continue;
+      shown.add(k);
+      markers.push({ lon: t.lon, lat: t.lat, color: CVAR('--ink-3'), r: 2.5 });
+      if (ok(state.node)) arcs.push({ from: { lon: state.node.longitude, lat: state.node.latitude }, to: t, color: DC, width: 1, alpha: 0.35 });
+    }
+    map.setData({ markers, arcs, date: new Date() });
+  };
+
+  const globeFeed = () => {
+    if (!globe || X.geoView !== 'globe') return;
+    const nodes = []; const links = []; const countries = {}; const bump = (c, n) => { if (c) countries[c] = (countries[c] || 0) + n; };
+    const origin = ok(state.direct) ? state.direct : state.exit; // 本机位置
+    if (ok(origin) && code(origin)) nodes.push({ id: 'self', role: 'origin', code: code(origin), lon: origin.longitude, lat: origin.latitude });
+    if (ok(state.node) && code(state.node)) { nodes.push({ id: 'exit', role: 'exit', code: code(state.node), lon: state.node.longitude, lat: state.node.latitude }); }
+    let di = 0;
+    for (const g of state.targetGeos) {
+      const c = code(g); if (!c) continue;
+      bump(c, g.count); if (!ok(g)) continue;
+      nodes.push({ id: 'd' + di, role: 'destination', code: c, lon: g.longitude, lat: g.latitude });
+      if (nodes.some((n) => n.id === 'exit')) links.push({ from: 'exit', to: 'd' + di, kind: 'request', count: g.count });
+      di++;
+    }
+    if (nodes.some((n) => n.id === 'self') && nodes.some((n) => n.id === 'exit')) links.push({ from: 'self', to: 'exit', kind: 'uplink', count: 1 });
+    globe.setState({
+      dark: ['dark', 'forest-dark'].includes(document.documentElement.dataset.theme),
+      countries: Object.entries(countries).map(([cc, count]) => ({ code: cc, count })),
+      nodes, links, autoRotate: spinOn, paused: false,
+    });
+  };
+
+  const draw = () => { flatDraw(); globeFeed(); };
+
+  let alive = true; let targetTimer = null; let drawTimer = null; let selfTimer = null; let nodeTimer = null;
+  const geoContext = () => JSON.stringify([isRunning(), X.S.selectedId, X.S.settings.ipv6Mode, X.S.settings.mixedPort]);
+  let lastGeoContext = geoContext();
+  const exitFresh = () => GEO_CACHE.exit && GEO_CACHE.exitKey === geoContext() && Date.now() - GEO_CACHE.exitAt < 120000;
+  const directFresh = () => GEO_CACHE.direct && GEO_CACHE.directStrategy === X.S.settings.ipv6Mode && Date.now() - GEO_CACHE.directAt < 120000;
+  const nodeFresh = () => GEO_CACHE.node && GEO_CACHE.nodeStrategy === X.S.settings.ipv6Mode && GEO_CACHE.nodeSelId === X.S.selectedId && Date.now() - GEO_CACHE.nodeAt < 600000;
+  const refreshSelf = async () => {
+    const requestKey = geoContext(), strategy = X.S.settings.ipv6Mode;
+    // seed from cache first so re-entering the page is instant
+    if (exitFresh()) { state.exit = GEO_CACHE.exit; fillIpCard(GEO_CACHE.exit); }
+    if (directFresh()) { state.direct = GEO_CACHE.direct; fillDirect(GEO_CACHE.direct); }
+    // the two lookups are independent: run them in parallel, fill each card as soon
+    // as its own response lands (the exit card no longer waits for the direct one)
+    const exitP = (async () => {
+      try {
+        const g = await api('geoSelf', {});
+        if (!alive || requestKey !== geoContext()) return;
+        state.exit = g; GEO_CACHE.exit = g; GEO_CACHE.exitKey = requestKey; GEO_CACHE.exitAt = Date.now();
+        fillIpCard(g);
+        fillExitNode(); // exit card updates as soon as the exit geo is known
+      } catch (e) {
+        if (!alive || requestKey !== geoContext()) return;
+        state.exit = { error: e.message }; GEO_CACHE.exit = null; GEO_CACHE.exitAt = 0;
+        fillIpCard(null, e.message);
+        fillExitNode(); // exit card shows the error honestly (no direct fallback)
+      }
+      draw();
+    })();
+    const directP = (async () => {
+      try {
+        const g = await api('geoSelf', { direct: true });
+        if (!alive || strategy !== X.S.settings.ipv6Mode) return;
+        state.direct = g; GEO_CACHE.direct = g; GEO_CACHE.directStrategy = strategy; GEO_CACHE.directAt = Date.now();
+        fillDirect(g);
+      } catch (e) { if (alive && !directFresh()) fillDirect(null, e.message); }
+    })();
+    await Promise.allSettled([exitP, directP]);
+  };
+    const refreshNode = async () => {
+    const sel = X.S.nodes.find((n) => n.id === X.S.selectedId);
+    if (!sel) { state.node = null; fillExitNode(); draw(); return; }
+    // cache hit: same node still fresh -> show instantly, skip the network entirely
+    if (nodeFresh()) { state.node = GEO_CACHE.node; fillExitNode(); draw(); return; }
+    try {
+      // only the selected server: fast (single DNS + cached lookup), no waiting on the rest
+      const all = await api('geoNodes', { servers: [sel.server] });
+      if (!alive || X.S.selectedId !== sel.id) return;
+      const g = all[sel.server];
+      if (g && !g.error) {
+        state.node = g;
+        GEO_CACHE.node = g; GEO_CACHE.nodeStrategy = X.S.settings.ipv6Mode; GEO_CACHE.nodeSelId = sel.id; GEO_CACHE.nodeServer = sel.server; GEO_CACHE.nodeAt = Date.now();
+      } else state.node = null;
+    } catch { /* keep cache */ }
+    fillExitNode();
+    draw();
+  };;
+  let targetBusy = false;
+  const targetCache = GEO_CACHE.targets || (GEO_CACHE.targets = new Map());
+  const refreshTargets = async () => {
+    if (!isRunning()) { state.targets = []; state.targetGeos = []; state.unknown = state.total = 0; state.targetError = ''; showCountries(); draw(); return; }
+    if (targetBusy) return;
+    targetBusy = true;
+    try {
+      const conns = await api('connections', {});
+      if (!alive || !isRunning()) return;
+      const byIp = new Map();
+      for (const c of conns) {
+        const ip = geoPublicIp(c.destinationIP) || geoPublicIp(c.host);
+        if (ip) byIp.set(ip, (byIp.get(ip) || 0) + 1);
+      }
+      const now = Date.now();
+      for (const [ip, hit] of targetCache) if (!byIp.has(ip) && now - hit.at > 120000) targetCache.delete(ip);
+      const ips = [...byIp].sort((a, b) => b[1] - a[1]).map(([ip]) => ip);
+      const batch = ips.filter((ip) => { const hit = targetCache.get(ip); return !hit || now - hit.at > (hit.geo?.error ? 30000 : 120000); }).slice(0, 8);
+      const geo = batch.length ? await api('geoIps', { ips: batch }) : {};
+      if (!alive || !isRunning()) return;
+      for (const ip of batch) targetCache.set(ip, { at: now, geo: geo[ip] || { error: '未返回结果' } });
+      const groups = new Map(); let located = 0;
+      for (const ip of ips) {
+        const g = targetCache.get(ip)?.geo; if (!code(g)) continue;
+        const cc = code(g), count = byIp.get(ip); located += count;
+        const previous = groups.get(cc);
+        if (previous) previous.count += count;
+        else groups.set(cc, { ...g, count });
+      }
+      state.targetError = ''; state.total = conns.length; state.unknown = conns.length - located;
+      state.targetGeos = [...groups.values()].sort((a, b) => b.count - a.count);
+      state.targets = state.targetGeos.filter((g) => Number.isFinite(g.longitude) && Number.isFinite(g.latitude)).map((g) => ({ lon: g.longitude, lat: g.latitude }));
+      showCountries(); draw();
+    } catch { if (alive) { state.targets = []; state.targetGeos = []; state.targetError = '活动连接暂不可用，请稍后重试。'; showCountries(); draw(); } }
+    finally { targetBusy = false; }
+  };
+
+  // ---- view switch
+  const setView = (v) => {
+    X.geoView = v;
+    try { localStorage.setItem('jj.geoView', v); } catch { /* private mode */ }
+    viewSeg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.v === v));
+    if (v === 'flat') {
+      if (globe) { try { globe.setState({ paused: true }); } catch { } }
+      globeLayout.style.display = 'none';
+      mapHolder.style.display = '';
+      mapHolder.classList.remove('viewfade'); void mapHolder.offsetWidth; mapHolder.classList.add('viewfade');
+      flatDraw();
+    } else {
+      mapHolder.style.display = 'none';
+      globeLayout.style.display = '';
+      globeBox.classList.remove('viewfade'); void globeBox.offsetWidth; globeBox.classList.add('viewfade');
+      if (!globe) { globe = initGlobe(globeBox); window.__globe = globe; } // lazily created; __globe kept as a diagnostics hook
+      globeFeed();
+    }
+  };
+  const viewSeg = h('div', { class: 'seg', role: 'group', 'aria-label': '切换地图模型' },
+    h('button', { 'data-v': 'flat', onclick: () => setView('flat') }, '平面地图'),
+    h('button', { 'data-v': 'globe', onclick: () => setView('globe') }, '3D 地球'));
+
+  (async () => {
+    try { WORLD_GEO = WORLD_GEO || await api('worldGeo', {}); } catch (e) { if (alive) toast('世界地图数据加载失败：' + e.message, true); return; }
+    if (!alive) return;
+    map = new WorldMap(flatCanvas, WORLD_GEO);
+    let saved = 'flat';
+    try { saved = localStorage.getItem('jj.geoView') === 'globe' ? 'globe' : 'flat'; } catch { /* ignore */ }
+    setView(saved);
+    refreshSelf(); refreshNode(); refreshTargets();
+    targetTimer = setInterval(refreshTargets, 5000);
+    selfTimer = setInterval(refreshSelf, 5 * 60 * 1000);
+    // re-query the node location when the user switches to a different node
+    let lastSelId = X.S.selectedId;
+    nodeTimer = setInterval(() => { if (X.S && X.S.selectedId !== lastSelId) { lastSelId = X.S.selectedId; refreshNode(); } }, 2000);
+  })();
+  drawTimer = setInterval(draw, 1500); // pulse markers on the flat view
+
+  const legend = h('div', { class: 'toolbar', style: { marginTop: '10px' } },
+    h('span', { class: 'chip' }, h('i', { style: { background: 'var(--accent)', width: '9px', height: '9px', borderRadius: '50%' } }), '本机/出口'),
+    h('span', { class: 'chip' }, h('i', { style: { background: 'var(--down)', width: '9px', height: '9px', borderRadius: '50%' } }), '节点'),
+    h('span', { class: 'chip' }, h('i', { style: { background: 'var(--ink-3)', width: '9px', height: '9px', borderRadius: '50%' } }), '连接目标'),
+    h('span', { class: 'mut2', style: { fontSize: '11.5px' } }, '位置来自 ip.sb 查询（本地缓存 30 天），目标为机房位置仅供参考'),
+    h('span', { class: 'sp' }),
+    h('button', { class: 'btn small', ref: 'spin', onclick: () => {
+      spinOn = !spinOn;
+      if (globe) { try { globe.setState({ autoRotate: spinOn, paused: false }); } catch { } }
+      const b = el.querySelector('[ref=spin]'); if (b) b.textContent = spinOn ? '停止自转' : '开启自转';
+    } }, '停止自转'),
+    h('button', { class: 'btn small', onclick: () => map && map.zoomBy(1.4) }, '放大'),
+    h('button', { class: 'btn small', onclick: () => map && map.zoomBy(1 / 1.4) }, '缩小'),
+    h('button', { class: 'btn small ghost', onclick: () => map && map.resetView() }, '复位'));
+
+  const el = h('div', { class: 'page' },
+    pageHead('地图', '自身、节点与目标服务器的地理位置 · 滚轮缩放拖拽平移',
+      viewSeg,
+      h('button', { class: 'btn', onclick: (e) => act(() => Promise.all([refreshSelf(), refreshNode(), refreshTargets()]), undefined, e.currentTarget) }, '刷新位置')),
+    h('div', { class: 'card ipcard', style: { marginBottom: '14px' } },
+      h('div', { class: 'ipmain' },
+        h('div', { class: 'k', style: { fontSize: '12px', color: 'var(--ink-3)' } }, running ? 'IP 检测 · 经当前节点出口' : 'IP 检测 · 本机公网（连接节点后可检测节点 IP 纯净度）'),
+        h('div', { class: 'iprow' }, exitIp, exitTag,
+          h('button', { class: 'btn small ghost', title: '复制 IP', onclick: () => navigator.clipboard.writeText(exitIp.textContent).then(() => toast('已复制')) }, '复制')),
+        exitLoc, exitMeta),
+      h('div', { class: 'ipside' },
+        h('div', { class: 'k', style: { fontSize: '12px', color: 'var(--ink-3)' } }, '直连公网'),
+        directIp, directLoc)),
+    h('div', { class: 'grid cols-3', style: { marginBottom: '14px' } }, nodeInfo.el),
+    h('div', { class: 'card' }, h('h2', {}, '世界地图', h('span', { class: 'hint' }, '平面图与 3D 地球可切换')), mapHolder, globeLayout, legend));
+
+  return {
+    el,
+    resize: () => draw(),
+    /** core state changes (start/stop) arrive here instead of a full re-render, so the globe never flashes */
+    state(S2) {
+      fillExitNode(); // isRunning() reads X.S.core.state which applyState already updated
+      purityBtn.disabled = !isRunning();
+      const context = geoContext();
+      if (context !== lastGeoContext) {
+        lastGeoContext = context; state.exit = null; exitIp.textContent = '检测中…'; exitLoc.textContent = ''; exitTag.style.visibility = 'hidden';
+        refreshSelf(); refreshNode(); refreshTargets();
+      }
+    },
+    destroy: () => { alive = false; clearInterval(targetTimer); clearInterval(drawTimer); clearInterval(selfTimer); clearInterval(nodeTimer); if (globe) { try { globe.destroy(); } catch { } globe = null; } },
+  };
+};
+
+// ================================================================ stats
+PAGES.stats = () => {
+  const S = X.S;
+  const days = lastDays(S.daily, 30);
+  const sum = (ds) => ds.reduce((a, d) => ({ up: a.up + d.up, down: a.down + d.down }), { up: 0, down: 0 });
+  const s7 = sum(days.slice(-7)); const s30 = sum(days);
+  const activeDays = days.filter((d) => d.up || d.down).length;
+
+  const canvas = h('canvas', { style: { height: '230px', width: '100%', display: 'block' }, 'aria-label': '近30天流量' });
+  const bars = new DailyBars(canvas);
+  const donut = h('canvas', { class: 'donut' });
+  const tile = (t, main, sub) => h('div', { class: 'card tile' }, h('div', { class: 'k' }, t), main, h('div', { class: 's' }, sub));
+
+  const tdV = h('div', { class: 'v down-c' }, '↓ ' + fmtBytes(S.today.down));
+  const tuV = h('div', { class: 'v up-c' }, '↑ ' + fmtBytes(S.today.up));
+  const sdV = h('div', { class: 'v down-c' }, isRunning() ? '↓ ' + fmtBytes(S.session.downTotal) : '-');
+  const suV = h('div', { class: 'v up-c' }, isRunning() ? '↑ ' + fmtBytes(S.session.upTotal) : '-');
+  const todayTile = tile('今日', h('div', { class: 'duo' }, h('div', {}, tdV), h('div', {}, tuV)), '随内核流量实时累计');
+  const sessTile = tile('本次运行', h('div', { class: 'duo' }, h('div', {}, sdV), h('div', {}, suV)), isRunning() ? '' : '内核未运行');
+
+  const list = days.slice().reverse().filter((d) => d.up || d.down);
+  const table = list.length ? h('div', { class: 'scroll', style: { maxHeight: '300px' } }, h('table', { class: 'tbl' },
+    h('thead', {}, h('tr', {}, ['日期', '下载', '上传', '合计'].map((t, i) => h('th', { class: i ? 'r' : '' }, t)))),
+    h('tbody', {}, list.map((d) => h('tr', {}, h('td', {}, d.key), h('td', { class: 'r mono' }, fmtBytes(d.down)), h('td', { class: 'r mono' }, fmtBytes(d.up)), h('td', { class: 'r mono' }, fmtBytes(d.up + d.down)))))))
+    : h('div', { class: 'unavail' }, '还没有流量记录。启动内核并产生流量后，这里会按天累计。');
+
+  const el = h('div', { class: 'page' },
+    pageHead('流量统计', '按天累计的真实内核流量', h('button', { class: 'btn danger', onclick: () => confirm('清空全部流量历史？') && act(() => api('clearStats'), '已清空') }, '清空历史')),
+    h('div', { class: 'grid cols-4', style: { marginBottom: '14px' } },
+      todayTile,
+      tile('近 7 天', h('div', { class: 'duo' }, h('div', { class: 'v down-c' }, '↓ ' + fmtBytes(s7.down)), h('div', { class: 'v up-c' }, '↑ ' + fmtBytes(s7.up))), ''),
+      tile('近 30 天', h('div', { class: 'duo' }, h('div', { class: 'v down-c' }, '↓ ' + fmtBytes(s30.down)), h('div', { class: 'v up-c' }, '↑ ' + fmtBytes(s30.up))), ''),
+      tile('活跃天数', h('div', { class: 'v' }, String(activeDays)), '近 30 天内有流量的天数')),
+    h('div', { class: 'row-2', style: { marginBottom: '14px' } },
+      h('div', { class: 'card' }, h('h2', {}, '近 30 天每日流量', trafficLegend()), canvas,
+        h('div', { class: 'note', style: { marginTop: '8px' } }, '统计内核流量计数器的增量，仅包含本客户端启动内核期间的流量')),
+      h('div', { class: 'card' }, h('h2', {}, '30 天上下行占比'), h('div', { class: 'dist-wrap', style: { justifyContent: 'center' } }, donut,
+        h('div', { class: 'legend' },
+          h('div', { class: 'li' }, h('i', { style: { width: '9px', height: '9px', borderRadius: '3px', background: 'var(--down)' } }), '下载', h('b', {}, fmtBytes(s30.down))),
+          h('div', { class: 'li' }, h('i', { style: { width: '9px', height: '9px', borderRadius: '3px', background: 'var(--up)' } }), '上传', h('b', {}, fmtBytes(s30.up))))))),
+    h('div', { class: 'card' }, h('h2', {}, '每日明细'), table));
+
+  const redrawDonut = () => drawDonut(donut, [{ value: s30.down, color: CVAR('--down') }, { value: s30.up, color: CVAR('--up') }], fmtBytes(s30.down + s30.up), '30 天合计');
+  const mount = () => { bars.update(days); redrawDonut(); };
+  mount();
+  return {
+    el,
+    mount,
+    tick(t) { // keep the today/session tiles truly live while the page is open
+      if (t.today) { tdV.textContent = '↓ ' + fmtBytes(t.today.down || 0); tuV.textContent = '↑ ' + fmtBytes(t.today.up || 0); }
+      sdV.textContent = '↓ ' + fmtBytes(t.downTotal || 0); suV.textContent = '↑ ' + fmtBytes(t.upTotal || 0);
+    },
+    resize: () => { bars.update(days); redrawDonut(); },
+  };
+};
+
+// ================================================================ logs
+PAGES.logs = () => {
+  const box = h('div', { class: 'logs', role: 'log' });
+  const countEl = h('span', { class: 'mut2' }, '');
+  const levelOk = (l) => {
+    if (X.logLevel === 'warn') return ['warn', 'error', 'fatal', 'panic'].includes(l.level);
+    if (X.logLevel === 'error') return ['error', 'fatal', 'panic'].includes(l.level);
+    return true;
+  };
+  const textOk = (l) => !X.logSearch || l.text.toLowerCase().includes(X.logSearch.toLowerCase());
+  const ok = (l) => levelOk(l) && textOk(l);
+  const line = (l) => {
+    const t = h('span', { class: 't' }, new Date(l.t).toLocaleTimeString() + '  ');
+    return h('div', { class: 'l l-' + l.level }, t, l.text);
+  };
+  const fill = () => {
+    const shown = X.logs.filter(ok);
+    box.replaceChildren(...shown.slice(-800).map(line));
+    countEl.textContent = `共 ${X.logs.length} 条，显示 ${Math.min(shown.length, 800)} 条`;
+    if (!shown.length) box.textContent = X.logs.length ? '没有匹配当前过滤条件的日志。' : '暂无日志。启动内核后，运行日志会显示在这里。';
+    if (X.logFollow) box.scrollTop = box.scrollHeight;
+  };
+  const levelSel = h('select', { 'aria-label': '日志级别', 'data-keep': 'logLevel', style: { width: '120px' }, onchange: (e) => { X.logLevel = e.target.value; fill(); } },
+    [['all', '全部级别'], ['warn', '警告及以上'], ['error', '仅错误']].map(([v, l]) => h('option', { value: v }, l)));
+  levelSel.value = X.logLevel;
+  const search = h('input', { type: 'text', placeholder: '搜索日志内容', value: X.logSearch, style: { width: '180px' }, 'data-keep': 'logSearch', oninput: (e) => { X.logSearch = e.target.value; fill(); } });
+  const follow = h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: X.logFollow, onchange: (e) => { X.logFollow = e.target.checked; if (e.target.checked) box.scrollTop = box.scrollHeight; } }), '自动滚动');
+  fill();
+  return {
+    el: h('div', { class: 'page' },
+      pageHead('运行日志', '内核与客户端的实时输出', levelSel, search, follow, countEl,
+        h('button', { class: 'btn', onclick: () => act(async () => { await api('clearLogs'); X.logs = []; fill(); }) }, '清空')),
+      box),
+    log: (l) => { if (!ok(l)) return; if (!box.childElementCount) box.replaceChildren(); countEl.textContent = `共 ${X.logs.length} 条，显示 ${Math.min(X.logs.filter(ok).length, 800)} 条`; const stick = X.logFollow || (box.scrollTop + box.clientHeight >= box.scrollHeight - 30); box.append(line(l)); while (box.childElementCount > 800) box.firstChild.remove(); if (stick) box.scrollTop = box.scrollHeight; },
+  };
+};
+
+// ================================================================ toolbox
+PAGES.toolbox = () => {
+  const S = X.S;
+  const item = (title, desc, btn) => h('div', { class: 'card', style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+    h('b', { style: { fontSize: '13.5px' } }, title),
+    h('div', { class: 'note' }, desc),
+    h('div', { style: { marginTop: 'auto' } }, btn));
+  const el = h('div', { class: 'page' },
+    pageHead('工具箱', '备份、导出与数据管理'),
+    h('div', { class: 'grid cols-2' },
+      item('导出配置备份', '把订阅、节点、规则、设置与流量历史导出为一个 JSON 文件，可跨机器恢复。注意：备份包含节点与订阅凭据，请妥善保管。',
+        h('button', { class: 'btn primary', onclick: (e) => act(() => api('exportBackup'), (r) => r && r.canceled ? '' : '备份已导出：' + r.path, e.currentTarget) }, '导出备份')),
+      item('导入配置备份', '恢复此前导出的备份，会覆盖当前的订阅、节点、规则与设置（流量历史一并恢复）。导入前建议先导出现有配置。',
+        h('button', { class: 'btn danger', onclick: (e) => {
+          if (!confirm('导入备份会覆盖当前全部配置数据，确定继续？')) return;
+          act(() => api('importBackup'), (r) => r && r.canceled ? '' : `已恢复备份：${r.nodes} 个节点、${r.subscriptions} 个订阅`, e.currentTarget);
+        } }, '导入备份')),
+      item('导出内核配置', '导出当前状态下实际生成并交给内核运行的 sing-box 配置（JSON），可用于排查或在新环境复刻。',
+        h('button', { class: 'btn', onclick: (e) => act(() => api('exportCoreConfig'), (r) => r && r.canceled ? '' : '内核配置已导出：' + r.path, e.currentTarget) }, '导出 sing-box 配置')),
+      item('打开数据目录', '打开配置文件所在文件夹（%APPDATA%\\JiajiaBox），包含 data.json 与地图 IP 缓存等。',
+        h('button', { class: 'btn', onclick: (e) => act(() => api('openDataDir'), '已打开数据目录', e.currentTarget) }, '打开目录'))),
+    h('div', { class: 'card', style: { marginTop: '14px' } }, h('h2', {}, '数据概览'),
+      h('div', { class: 'grid cols-4' },
+        h('div', { class: 'card tile' }, h('div', { class: 'k' }, '订阅'), h('div', { class: 'v' }, String(S.subscriptions.length))),
+        h('div', { class: 'card tile' }, h('div', { class: 'k' }, '节点'), h('div', { class: 'v' }, String(S.nodes.length))),
+        h('div', { class: 'card tile' }, h('div', { class: 'k' }, '自定义规则'), h('div', { class: 'v' }, String(S.rules.length))),
+        h('div', { class: 'card tile' }, h('div', { class: 'k' }, '流量记录天数'), h('div', { class: 'v' }, String(Object.keys(S.daily || {}).length))))));
+  return { el };
+};
+
+// ================================================================ color wheel
+function hsvToRgb(h, s, v) {
+  const f = (n) => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+  return [Math.round(f(5) * 255), Math.round(f(3) * 255), Math.round(f(1) * 255)];
+}
+function rgbToHex(r, g, b) { return '#' + [r, g, b].map((x) => x.toString(16).padStart(2, '0')).join(''); }
+function hexToRgb(hex) { const m = /^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex); return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [22, 24, 29]; }
+
+function colorWheelPicker(currentColor, onPick, onReset) {
+  const W = 200; const R = 90; const CX = W / 2; const CY = W / 2;
+  const canvas = h('canvas', { width: W, height: W, style: { width: W + 'px', height: W + 'px', cursor: 'crosshair', borderRadius: '50%' } });
+  const g = canvas.getContext('2d');
+  let brightness = 1;
+  let cur = currentColor || '';
+
+  const paint = () => {
+    const img = g.createImageData(W, W);
+    for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
+      const dx = x - CX; const dy = y - CY; const dist = Math.sqrt(dx * dx + dy * dy);
+      const i = (y * W + x) * 4;
+      if (dist <= R) {
+        const hue = ((Math.atan2(dy, dx) * 180 / Math.PI) + 360) % 360;
+        const sat = Math.min(1, dist / R);
+        const [r, gg, b] = hsvToRgb(hue, sat, brightness);
+        img.data[i] = r; img.data[i + 1] = gg; img.data[i + 2] = b; img.data[i + 3] = 255;
+      } else { img.data[i + 3] = 0; }
+    }
+    g.putImageData(img, 0, 0);
+    // brightness grid overlay
+    g.fillStyle = `rgba(0,0,0,${1 - brightness})`;
+    g.beginPath(); g.arc(CX, CY, R, 0, Math.PI * 2); g.fill();
+  };
+
+  const pick = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left; const y = e.clientY - rect.top;
+    const dx = x - CX; const dy = y - CY; const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist > R) return;
+    const hue = ((Math.atan2(dy, dx) * 180 / Math.PI) + 360) % 360;
+    const sat = Math.min(1, dist / R);
+    const [r, gg, b] = hsvToRgb(hue, sat, brightness);
+    cur = rgbToHex(r, gg, b);
+    preview.style.background = cur; hexInput.value = cur;
+    onPick(cur);
+  };
+  canvas.addEventListener('pointerdown', (e) => { pick(e); canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener('pointermove', (e) => { if (e.buttons) pick(e); });
+
+  const preview = h('div', { style: { width: '36px', height: '36px', borderRadius: '8px', border: '2px solid var(--line)', background: cur || 'transparent', flex: 'none' } });
+  const hexInput = h('input', { type: 'text', value: cur, placeholder: '#RRGGBB', style: { width: '90px', fontFamily: 'var(--mono)', fontSize: '12px' },
+    onchange: () => { if (/^#[0-9a-fA-F]{6}$/.test(hexInput.value)) { cur = hexInput.value; preview.style.background = cur; onPick(cur); } } });
+  const briSlider = h('input', { type: 'range', min: 20, max: 100, value: Math.round(brightness * 100), style: { flex: '1' },
+    oninput: (e) => { brightness = Number(e.target.value) / 100; paint(); } });
+  const presets = ['#16181d', '#e8eaf1', '#ffffff', '#5b9bd5', '#e8a54b', '#4bc0c0', '#c0504d', '#9552a3', '#2f6bff', '#f43f5e'];
+  const swatches = h('div', { style: { display: 'flex', gap: '6px', flexWrap: 'wrap', marginTop: '8px' } },
+    presets.map((c) => h('button', { style: { width: '22px', height: '22px', borderRadius: '5px', background: c, border: '1px solid var(--line)', cursor: 'pointer', flex: 'none' },
+      title: c, onclick: () => { cur = c; preview.style.background = c; hexInput.value = c; onPick(c); } })));
+  const resetBtn = h('button', { class: 'btn small ghost', onclick: () => { cur = ''; preview.style.background = 'transparent'; hexInput.value = ''; onReset(); } }, '恢复默认');
+  paint();
+  return h('div', { style: { display: 'flex', gap: '16px', alignItems: 'flex-start' } },
+    canvas,
+    h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px', flex: '1' } },
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, preview, hexInput, resetBtn),
+      h('div', { style: { display: 'flex', alignItems: 'center', gap: '8px' } }, h('span', { class: 'mut2', style: { fontSize: '11px' } }, '亮度'), briSlider),
+      swatches));
+}
+
+// ================================================================ about
+const ABOUT_INFO = {
+  repo: { url: 'https://github.com/amanmanlai-byte/BearBox', label: 'Bear Box 桌面端仓库' },
+  author: { name: 'amanmanlai-byte', url: 'https://github.com/amanmanlai-byte' },
+  original: { name: 'weilai090624-code', url: 'https://github.com/weilai090624-code/JiajiaBox' },
+  kernel: { name: 'SagerNet (nekohasekai)', url: 'https://github.com/SagerNet/sing-box' },
+};
+
+PAGES.about = () => {
+  const info = {}; // filled from IPC
+  const link = (text, url) => {
+    if (!url) return h('span', { class: 'mut2' }, text);
+    return h('a', { href: url, style: { color: 'var(--accent)', textDecoration: 'none' }, onclick: (e) => { e.preventDefault(); api('openExternal', { url }); } }, text);
+  };
+  const sect = (title, ...kids) => h('div', { class: 'card', style: { marginBottom: '14px' } }, h('h2', {}, title), ...kids);
+  const el = h('div', { class: 'page' },
+    pageHead('关于', 'Bear Box — 简约易用的 Windows 桌面代理客户端'),
+
+    // hero
+    h('div', { class: 'card', style: { display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '14px', padding: '20px 24px' } },
+      h('div', { style: { width: '56px', height: '56px', borderRadius: '14px', backgroundImage: "url('assets/brand.png')", backgroundSize: 'cover', flex: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' } }),
+      h('div', { style: { flex: '1' } },
+        h('b', { style: { fontSize: '18px' } }, 'Bear Box'),
+        h('span', { class: 'tag accent', style: { marginLeft: '8px' } }, 'v0.3.0 预览'),
+        h('div', { class: 'mut2', style: { fontSize: '12px', marginTop: '4px' }, ref: 'platform' }, '加载平台信息…'),
+        h('div', { class: 'note', style: { marginTop: '6px', lineHeight: '1.5' } },
+          '简约易用的 Windows 桌面代理客户端。基于 JiajiaBox（Android）项目二次开发，采用独立的 UI 与架构。默认内置 CNIP + CN 域名分流，开袋即食。')),
+      h('div', { class: 'grid', style: { gap: '8px', flex: 'none' } },
+        link('原始项目 →', ABOUT_INFO.original.url),
+        ABOUT_INFO.repo.url ? link('本项目仓库 →', ABOUT_INFO.repo.url) : h('span', { class: 'mut2', style: { fontSize: '11px' } }, '本项目仓库：待填写'))),
+
+    // open source declaration
+    sect('开源声明',
+      h('div', { class: 'note', style: { lineHeight: '1.7' } },
+        h('b', {}, 'Bear Box 桌面端'), ' 基于 ', h('b', {}, 'JiajiaBox（Android）'), ' 项目二次开发。', h('br'),
+        '桌面端 UI、后端逻辑、订阅解析、图表和配置管理为本项目新增开发。', h('br'),
+        '3D WebGL 地球渲染器移植自 JiajiaBox 的 assets/globe/ 目录（MIT，原作者 weilai090624-code）。', h('br'),
+        '代理内核 ', h('b', {}, 'sing-box'), ' 由 SagerNet (nekohasekai) 开发，JiajiaBox 项目维护其定制分支（版本 1.14.3-Jiajia-7）。', h('br'),
+        h('br'),
+        h('b', {}, '许可证：'), '本软件采用 ', h('b', {}, 'MIT License'), '。代理内核 sing-box 采用 ', h('b', {}, 'GPL-3.0'), '（独立进程，进程隔离）。', h('br'),
+        '原始项目 JiajiaBox 采用 ', h('b', {}, 'MIT License'), '。', h('br'),
+        h('br'),
+        '源代码获取：本软件发布时随附源代码仓库地址，或通过上方链接访问上游仓库获取。')),
+
+    // authors
+    sect('作者与贡献者',
+      h('table', { class: 'tbl' }, h('tbody', {},
+        h('tr', {}, h('td', { style: { width: '140px', color: 'var(--ink-3)' } }, 'Bear Box 桌面端'),
+          h('td', {}, h('b', {}, ABOUT_INFO.author.name || 'Bear Box'), ' ', link('→ 仓库', ABOUT_INFO.repo.url))),
+        h('tr', {}, h('td', { style: { color: 'var(--ink-3)' } }, 'JiajiaBox 原始项目'),
+          h('td', {}, h('b', {}, 'weilai090624-code'), ' ', link('→ 仓库', ABOUT_INFO.original.url))),
+        h('tr', {}, h('td', { style: { color: 'var(--ink-3)' } }, 'sing-box 代理内核'),
+          h('td', {}, h('b', {}, 'SagerNet (nekohasekai)'), ' ', link('→ 仓库', ABOUT_INFO.kernel.url))),
+        h('tr', {}, h('td', { style: { color: 'var(--ink-3)' } }, 'Electron 框架'),
+          h('td', {}, h('b', {}, 'Electron contributors'), ' ', link('→ 官网', 'https://www.electronjs.org/'))),
+        h('tr', {}, h('td', { style: { color: 'var(--ink-3)' } }, 'js-yaml'),
+          h('td', {}, h('b', {}, 'Vladimir Zapparov'), ' ', link('→ 仓库', 'https://github.com/nodeca/js-yaml'))),
+        h('tr', {}, h('td', { style: { color: 'var(--ink-3)' } }, '地球贴图'),
+          h('td', {}, h('b', {}, 'Solar System Scope / INOVE'), ' ', link('→ 纹理页', 'https://www.solarsystemscope.com/textures/'), h('span', { class: 'tag', style: { marginLeft: '6px' } }, 'CC BY 4.0')))))),
+
+    // open source acknowledgments
+    sect('开源鸣谢',
+      h('div', { class: 'note', style: { lineHeight: '1.7' } },
+        '感谢以下开源项目和依赖，没有它们就没有 Bear Box：', h('br'),
+        h('b', {}, 'JiajiaBox（Android）'), ' — 原始项目，节点名配置映射和地球渲染器的来源（MIT）', h('br'),
+        h('b', {}, 'sing-box / SagerNet'), ' — 代理内核，强大的多协议代理引擎（上游 GPL-3.0-or-later）', h('br'),
+        h('b', {}, 'NekoBox'), ' — UI 风格和设计理念的灵感来源', h('br'),
+        h('b', {}, 'Electron'), ' — 桌面应用框架（MIT）', h('br'),
+        h('b', {}, 'js-yaml 4.3.2 / argparse 2.0.1'), ' — YAML 解析（MIT / Python-2.0）', h('br'),
+        h('b', {}, 'Solar System Scope'), ' — 地球贴图（CC BY 4.0）', h('br'),
+        h('b', {}, 'Natural Earth'), ' — 世界地图 GeoJSON 数据（公有领域）', h('br'),
+        h('b', {}, 'WireGuard / wintun'), ' — TUN 虚拟网卡驱动（官方预编译 DLL 专用许可）')),
+
+    // license
+    sect('许可证',
+      h('div', { class: 'note', style: { lineHeight: '1.7' } },
+        h('b', {}, 'Bear Box 桌面端：'), 'MIT License', h('br'),
+        'Copyright (c) 2026 Bear Box contributors', h('br'),
+        h('br'),
+        h('b', {}, 'sing-box 内核：'), '上游 GPL-3.0-or-later；定制分支待核实', h('br'),
+        'Copyright (C) 2022 by nekohasekai', h('br'),
+        '各组件分别适用其许可证；进程隔离不能代替分发义务核验。', h('br'),
+        '当前内核对应源码与美术素材授权仍待核实，发布前请核对 THIRD_PARTY_NOTICES.md 和 SOURCE.txt。', h('br'),
+        h('br'),
+        h('b', {}, '地球贴图：'), 'Creative Commons Attribution 4.0 International', h('br'),
+        'Copyright (c) Solar System Scope / INOVE', h('br'),
+        h('br'),
+        '完整许可证文本和第三方声明请查看项目仓库中的 ',
+        h('b', {}, 'LICENSE'), '、', h('b', {}, 'NOTICE'), ' 和 ', h('b', {}, 'THIRD_PARTY_NOTICES.md'), ' 文件。')),
+
+    // legal
+    sect('版权与法律声明',
+      h('div', { class: 'note', style: { lineHeight: '1.7' } },
+        h('b', {}, '本软件与原始项目的关系：'), '本软件是 JiajiaBox 的桌面端二次开发版本，采用独立的软件名称和 UI；不代表与原始项目存在官方关联或背书。', h('br'),
+        h('br'),
+        h('b', {}, '版权归属：'), h('br'),
+        '· Bear Box 桌面端新增代码：Copyright (c) 2026 Bear Box contributors', h('br'),
+        '· JiajiaBox 原始项目：Copyright (c) 2026 weilai090624-code', h('br'),
+        '· sing-box 内核：Copyright (C) 2022 by nekohasekai', h('br'),
+        '· 地球贴图：Solar System Scope / INOVE', h('br'),
+        h('br'),
+        'Bear Box 和 Bear Box 图标为本项目的标识。JiajiaBox 和 sing-box 为各自项目的标识。')),
+
+    // links
+    sect('链接',
+      h('div', { style: { display: 'flex', flexDirection: 'column', gap: '8px' } },
+        link('🌐 JiajiaBox 原始项目（Android）', ABOUT_INFO.original.url),
+        link('🌐 sing-box 上游项目', ABOUT_INFO.kernel.url),
+        link('📄 本软件许可证（MIT）', 'https://opensource.org/licenses/MIT'),
+        link('📄 GPL-3.0 许可证（内核）', 'https://www.gnu.org/licenses/gpl-3.0.html'),
+        link('📄 CC BY 4.0（地球贴图）', 'https://creativecommons.org/licenses/by/4.0/'),
+        ABOUT_INFO.repo.url ? link('📦 本项目仓库', ABOUT_INFO.repo.url) : null,
+        ABOUT_INFO.repo.url ? link('🐛 问题反馈', ABOUT_INFO.repo.url + '/issues') : null)));
+
+  // fetch platform info
+  api('appInfo', {}).then((i) => {
+    const p = el.querySelector('[ref=platform]');
+    if (p) p.textContent = `${i.platform === 'win32' ? 'Windows' : i.platform} ${i.arch} · Electron ${i.electron} · Node ${i.node}`;
+  }).catch(() => {});
+  return { el };
+};
+
+// ================================================================ settings
+PAGES.settings = () => {
+  const S = X.S; const s = S.settings; const F = {};
+  const text = (k, type = 'text') => (F[k] = h('input', { type, value: s[k] }));
+  const check = (k, label, dis) => { F[k] = h('input', { type: 'checkbox', checked: !!s[k], disabled: dis }); return h('label', { class: 'switch' }, F[k], label); };
+  // theme applies instantly: it is a pure UI preference, no save button needed
+  const sel = (k, opts) => {
+    F[k] = h('select', { onchange: k === 'theme' ? () => act(() => api('setSettings', { theme: F[k].value })) : null }, opts.map(([v, l]) => h('option', { value: v }, l)));
+    F[k].value = s[k]; return F[k];
+  };
+  const fld = (l, el, span, hint) => h('div', { class: 'field' + (span ? ' span2' : '') }, h('label', {}, l), el, hint ? h('div', { class: 'note' }, hint) : null);
+  const sect = (t, ...kids) => h('div', { class: 'card sect' }, h('h2', {}, t), h('div', { class: 'form-grid' }, kids));
+
+  const save = h('button', { class: 'btn primary', onclick: (e) => act(async () => {
+    const patch = {}; for (const [k, el] of Object.entries(F)) patch[k] = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? Number(el.value) : el.value.trim());
+    return api('setSettings', patch);
+  }, (r) => (r && r.restarted ? '设置已保存，内核已重启生效' : '设置已保存'), e.currentTarget) }, '保存设置');
+
+  const el = h('div', { class: 'page' },
+    pageHead('设置', '修改后点击保存；影响内核的设置会自动重启内核', save),
+    h('div', { class: 'settings-grid' },
+      sect('代理',
+        fld('本地代理端口（混合 HTTP/SOCKS）', text('mixedPort', 'number')),
+        fld('路由模式', sel('mode', [['rule', '规则（大陆直连）'], ['global', '全局代理']])),
+        h('div', {}, check('allowAccess', '允许来自局域网的连接')),
+        h('div', {}, check('bypassLan', '绕过局域网地址')),
+        h('div', {}, check('trafficSniffing', '启用流量探测（sniff）')),
+        h('div', { class: 'span2' }, check('tun', 'TUN 模式（虚拟网卡接管，遵循代理规则）'),
+          h('div', { class: 'warnbox', style: { marginTop: '8px' } }, '启动 TUN 时按需请求管理员权限。协议栈、MTU、严格路由及环境检查请前往左侧「TUN 网络」。TUN 接管范围与规则/全局路由模式分别设置。'))),
+      sect('DNS',
+        fld('远程 DNS', text('remoteDns'), 0, '经代理查询，例如 https://dns.google/dns-query'),
+        fld('直连 DNS', text('directDns'), 0, '例如 https://223.5.5.5/dns-query 或 local'),
+        h('div', {}, check('fakeip', '启用 FakeIP（合成地址由内核映射回域名）')),
+        h('div', {}, check('dnsCache', '启用 DNS 缓存')),
+        h('div', {}, check('dnsReverseMapping', '启用 DNS 反向映射')),
+        h('div', { class: 'span2 note' }, 'FakeIP 仅处理经过内核 DNS 的 A/AAAA 请求；节点服务器与直连规则优先真实解析。更改后保存，运行中的内核会重启。'),
+        fld('IPv6 策略', sel('ipv6Mode', [['prefer_ipv4', '优先 IPv4'], ['prefer_ipv6', '优先 IPv6'], ['ipv4_only', '仅 IPv4'], ['ipv6_only', '仅 IPv6']]))),
+      sect('订阅',
+        fld('自动更新间隔（分钟）', text('autoUpdateSubsMin', 'number'), 0, '0 表示关闭自动更新；仅对有链接的订阅生效')),
+      sect('内核',
+        fld('Clash API 端口', text('apiPort', 'number'), 0, '仅监听 127.0.0.1，客户端用它读取实时数据'),
+        fld('日志级别', sel('logLevel', [['trace', 'trace'], ['debug', 'debug'], ['info', 'info'], ['warn', 'warn'], ['error', 'error']])),
+        fld('测速地址', text('connectionTestURL'), 1, '必须是 https:// 地址：这版内核会忽略 http:// 测速地址；节点页也可快速切换'),
+        fld('测速并发数', text('testConcurrency', 'number'), 0, '同时测试的节点数，默认 5'),
+        h('div', { class: 'span2 note' }, `内核：${S.core.version || '未找到'}`, h('br'), `路径：${S.core.binary}`)),
+      sect('系统',
+        h('div', {}, check('setSystemProxy', '启动内核时自动设置 Windows 系统代理', !S.sysproxySupported), !S.sysproxySupported ? h('div', { class: 'note' }, '当前系统不是 Windows，此项不可用') : null),
+        h('div', {}, check('autoStartCore', '打开客户端时自动启动内核')))));
+  return { el, state(S2) {
+    const clear = el.querySelector('[data-wallpaper-clear]'); if (clear) clear.disabled = !S2.settings.wallpaper;
+    const status = el.querySelector('[data-wallpaper-status]'); if (status) status.textContent = S2.settings.wallpaper ? '已启用' : '未设置';
+  } };
+};

@@ -1,36 +1,19 @@
-# Bear Box
+# Bear Box Windows x64
 
-简约易用的 Windows 桌面代理客户端。基于 [JiajiaBox](https://github.com/weilai090624-code/JiajiaBox)（Android）项目二次开发，默认内置 CNIP + CN 域名分流，开袋即食。
+此包为 0.3.0-preview.2 的本地修订，保留原自定义 sing-box 内核。完整解压后运行 BearBox.exe，不能在压缩软件预览中运行。
 
-## 功能
+默认 TUN 关闭；启动 TUN 时可能请求管理员权限。关闭窗口可按设置隐藏到托盘；在托盘选择退出才彻底结束。正常彻底退出会关闭当前用户的 Windows 手动系统代理，即使客户端自身未启用代理；不会恢复之前处于开启状态的代理。强制结束进程、系统断电无法保证执行退出回调。
 
-- 多协议代理：VMess、VLESS（含 Reality）、Trojan、Shadowsocks、Hysteria2、TUIC、SOCKS、HTTP
-- 订阅管理：Clash YAML / base64 / 明文链接 / sing-box JSON / SIP008
-- 节点测速：URL Test（可自定义测速地址与并发数）
-- 系统代理 / TUN 模式
-- 流量统计与实时可视化
-- 3D 地球 + 平面地图（出口/节点/目标定位）
-- 按进程分流（分应用代理的 Windows 等效）
-- 深色 / 浅色主题 + 自定义壁纸 + 毛玻璃效果
-- 系统托盘 + 关闭到托盘
+节点页支持中文输入法搜索、清除筛选和默认展开的状态分布。设置提供 FakeIP、DNS 缓存、反向映射及 IPv4/IPv6 策略，保存后按需重启内核。FakeIP 仅对经过内核 DNS 的请求生效，浏览器自带 DoH 不一定受此开关影响。
 
-## 下载
+“界面自定义”集中管理显示模式、主题、字号、密度、侧边栏、透明度与壁纸。只有简约主题允许自选字体/界面/主色；森林主题使用专属配色。亮度遮罩和独立毛玻璃模糊调节已移除，玻璃仍有固定模糊效果。页面、按钮和展开区使用短动画，并遵循系统减少动画设置。
 
-从 [Releases](https://github.com/amanmanlai-byte/BearBox/releases) 页面下载最新版本，解压后运行 `BearBox.exe`。
+地图按实际可用公网目标 IP 查询国家；私网、合成地址和没有真实目的 IP 的连接无法可靠定位，不猜测国家。优先 IPv6 检测先尝试 IPv6，失败可回退 IPv4；“仅 IPv6”失败时明确报错。出口查询不会悄悄改成直连检测。IP 地理信息不是 GPS，也不保证代表每条连接的实际出口。
 
-## 构建
+便携模式数据位于 trial-data。该目录包含订阅凭据、节点密码、访问记录和自定义壁纸，勿上传公开仓库。备份配置前注意隐私。
 
-```bash
-cd app
-npm install
-npm test
-npm run pack:win
-```
+瘦身保留中文/英文 Electron 语言包、必要 DLL、内核、规则集与全部必要许可，删除其它语言资源、遗留开发 CLI/半安装 Electron 和可重新生成的图形/代码缓存。不要自行删除 Chromium 许可或运行库。
 
-内核 sing-box（1.14.3-Jiajia-7）由 [JiajiaBox](https://github.com/weilai090624-code/JiajiaBox) 项目源码编译，Windows x64。构建前需将内核二进制放入 `app/core/` 目录。
+修改记录见 CHANGELOG.md；验证范围见 验证记录.md；快捷分流见 快捷分流说明.md。准备上传 GitHub 时阅读 GITHUB_RELEASE.md。
 
-## 许可证
-
-MIT License。详见 [LICENSE](LICENSE)。
-
-代理内核 sing-box 采用 GPL-3.0 许可证，以独立进程运行。
+许可索引为 THIRD_PARTY_NOTICES.md。自定义内核完整对应源码、美术授权和规则集溯源仍未全部核实，当前包不能据此宣称已满足所有公开分发条件。

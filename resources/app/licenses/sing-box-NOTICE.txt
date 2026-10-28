@@ -1,0 +1,10 @@
+sing-box upstream: https://github.com/SagerNet/sing-box
+Copyright (C) 2022 by nekohasekai <contact-sagernet@sekai.icu>
+Upstream license: GNU GPL version 3 or (at your option) any later version.
+Full GPL version 3 text: GPL-3.0.txt.
+Additional upstream condition: no derivative work may use the sing-box name or
+imply association with the application without prior consent.
+Reference: https://raw.githubusercontent.com/SagerNet/sing-box/testing/LICENSE
+The exact fork's complete corresponding source and additional notices remain
+unverified; see SOURCE.txt in the portable distribution. This notice does not
+assert that an upstream snapshot corresponds to the bundled binary.

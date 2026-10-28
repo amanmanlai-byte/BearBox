@@ -1,0 +1,17 @@
+Bear Box WebGL globe
+Original port attribution: JiajiaBox, Copyright (c) 2026 weilai090624-code.
+Original MIT license: ../../../licenses/JiajiaBox-MIT.txt (from this directory).
+Earth day/night/cloud textures: Solar System Scope / INOVE, CC BY 4.0.
+https://www.solarsystemscope.com/textures/
+Textures resized and converted to WebP. Full CC text in app/licenses/CC-BY-4.0.txt.
+Natural Earth map provenance and unresolved attribution items: app/THIRD_PARTY_NOTICES.md.
+
+This is a geographic connection illustration, not traceroute or physical routing.
+Locations come from online IP.SB responses; no offline MaxMind database is bundled.
+Country counts use available public destination IPs, grouped by returned country code.
+Missing coordinates do not erase known countries, but cannot provide precise map points.
+Private/synthetic/missing destination IPs and failed queries remain explicitly unlocated.
+IP geolocation is approximate; different destinations and IPv4/IPv6 may use different exits.
+Day/night rendering uses device UTC time and approximate solar calculations:
+https://gml.noaa.gov/grad/solcalc/calcdetails.html
+It does not show real-time weather. Background is transparent.
