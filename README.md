@@ -55,4 +55,3 @@ Windows 便携包构建脚本为 `npm run pack:win`。内核相关测试需要�
 - [更新记录](CHANGELOG.md)
 - [测试报告](TEST_REPORT.md)
 - [源码与来源记录](SOURCE.txt)
-- [GitHub 发布说明](GITHUB_RELEASE.md)
